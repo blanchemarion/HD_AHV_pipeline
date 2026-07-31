@@ -1,0 +1,44 @@
+# MATLAB autosave and temporary files
+*.asv
+*.m~
+*.autosave
+*.tmp
+
+# MATLAB generated files
+*.mex*
+*.slxc
+*.sfx
+*.mlappinstall
+*.mltbx
+*.prj
+
+# Simulink generated folders
+slprj/
+sccprj/
+*_grt_rtw/
+*_ert_rtw/
+*_rtw/
+*_sfprj/
+
+# Code generation
+codegen/
+
+# MATLAB preferences and project metadata
+.matlab/
+*.mproj
+resources/project/Root.type.Files/
+
+# MATLAB test and coverage outputs
+coverage/
+test-results/
+
+# Large data and result files
+*.mat
+outputs/
+data_processed/
+
+# Operating system and editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
