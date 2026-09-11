@@ -1,8 +1,8 @@
 # HD/AHV analysis pipeline
 
-MATLAB pipeline for modeling neural activity in Surface, Molino, and Pachon fish using network phase and angular head velocity (AHV). It selects phase-tuned candidates, fits three matched models, classifies CW/CCW/Symmetric neurons, and produces fish-level model, behavior, poster, and functional/anatomical comparisons.
+MATLAB pipeline for fitting neural activity encoding models in Surface, Molino, and Pachon fish using network phase and angular head velocity (AHV). It selects phase-tuned candidates, fits three matched models, classifies CW/CCW/Symmetric neurons, and produces fish-level model, behavior, and functional/anatomical comparisons.
 
-Raw data are read from an external tree. Generated data and tables go to `data_processed/`; figures and reports go to `outputs/`.
+Raw data are read from an external tree /home/blanche/data/{surface,molino,pachon}/rec*. Generated data and tables go to `data_processed/`; figures and reports go to `outputs/`.
 
 ## Workflow
 
