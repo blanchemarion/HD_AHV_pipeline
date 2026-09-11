@@ -1,0 +1,8 @@
+function [Y,provenance] = loadAlignedActivityFromManifest(Result,P)
+C=load(Result.paths.candidatePath,'calcium_traces','time_s','candidate_cell_ids'); ids=double(C.candidate_cell_ids(:)); Y0=double(C.calcium_traces); if size(Y0,2)~=numel(ids); Y0=Y0'; end
+assert(isequal(ids(Result.tunedCandidateOrder),Result.tunedCandidateIDs(:)),'Manifest neuron IDs/order no longer match candidate file.');
+if P.model.zscoreActivityWithinFitWindow; A=Y0(:,Result.tunedCandidateOrder); source='candidate calcium_traces'; readMode='candidate file';
+else; assert(isfield(Result.candidateDiagnostics,'rawTraceMapping'),'Full-fit manifest lacks raw RASTER mapping provenance.'); M=Result.candidateDiagnostics.rawTraceMapping; ids=M.originalRoiIds(Result.tunedCandidateOrder); rows=M.rawFrameStart:M.rawFrameEnd; W=whos("-file",char(M.rasterFile),"deltaFoF"); assert(~isempty(W),'Mapped RASTER lacks deltaFoF.'); try; MF=matfile(char(M.rasterFile)); if W.size(1)>=M.rawFrameEnd; A=double(MF.deltaFoF(rows,ids)); else; A=double(MF.deltaFoF(ids,rows))'; end; readMode='indexed MAT-file read'; catch; Q=load(char(M.rasterFile),'deltaFoF'); X=double(Q.deltaFoF); if size(X,1)<M.rawFrameEnd&&size(X,2)>=M.rawFrameEnd; X=X'; end; A=X(rows,ids); readMode='full-load fallback'; end; A=A+1; source='raw RASTER deltaFoF + 1 using saved one-to-one mapping'; end
+t=double(C.time_s(:)); target=Result.tCa(:); [tf,loc]=ismember(target,t); assert(all(tf),'Saved aligned time base not found exactly in candidate time_s.'); Y=A(loc,:);
+provenance=struct('candidatePath',Result.paths.candidatePath,'activitySource',source,'alignment','exact Result.tCa membership in candidate time_s','rawTraceMappingReused',~P.model.zscoreActivityWithinFitWindow,'rasterReadMode',readMode);
+end

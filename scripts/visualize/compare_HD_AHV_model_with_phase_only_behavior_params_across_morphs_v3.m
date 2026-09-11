@@ -1,24 +1,23 @@
 function results = compare_HD_AHV_model_with_phase_only_behavior_params_across_morphs_v3(cfg)
 %COMPARE_HD_AHV_MODEL_WITH_PHASE_ONLY_BEHAVIOR_PARAMS_ACROSS_MORPHS_V3
-% Compare four explicitly named neural-activity models across morphs.
+% Compare three explicitly named neural-activity models across morphs.
 %
 % This script reads the morph-level output produced by:
-%   fit_neuron_HD_AHV_four_models_behavior_tuned_cells_only_ROC.m
+%   fit_neuron_HD_AHV_three_models_behavior_tuned_cells_only_ROC.m
 %
 % It expects one result file per morph:
 %   HD_AHV_behavior_augmented_phase_tuned_only_with_phase_only_results.mat
 %
-% FOUR MODELS ARE COMPARED ON THE SAME NEURONS, FRAMES AND CV FOLDS
+% THREE PRIMARY MODELS USE THE SAME NEURONS, FRAMES AND CV FOLDS
 % ----------------------------------------------------------------
-%   phase + AHV:                   cos(phi)+sin(phi)+|AHV|+AHV
-%   phase + AHV + forward + vigor: cos(phi)+sin(phi)+|AHV|+AHV+F+V
-%   phase:                         cos(phi)+sin(phi)
-%   AHV + forward + vigor:         |AHV|+AHV+F+V
+%   phase + AHV: cos(phi)+sin(phi)+|AHV|+AHV
+%   phase:       cos(phi)+sin(phi)
+%   AHV:         |AHV|+AHV
 %
 % The saved variable names cvR2Original and cvR2Full are retained by the
 % fitting script for backward compatibility. In every user-facing label,
 % "Original" is called "phase + AHV" and "Full" is called
-% "phase + AHV + forward + vigor".
+% "phase + AHV".
 %
 % The fitting script uses five contiguous blocked folds. This comparison
 % script checks the saved fold count and reports aggregate held-out R^2.
@@ -26,24 +25,24 @@ function results = compare_HD_AHV_model_with_phase_only_behavior_params_across_m
 %
 % PRIMARY INFERENTIAL UNIT
 % ------------------------
-% Fish/session is the independent biological replicate. Neurons are nested
+% Fish (true animal ID) is the independent biological replicate. Neurons are nested
 % within fish and are therefore NOT entered as independent observations in
 % cross-morph statistical tests. Each requested outcome is first summarized
 % within fish.
 %
 % PRIMARY QUESTIONS
 % -----------------
-%   1. Do phase + AHV + forward + vigor coefficients differ by morph?
-%   2. Does adding forward + vigor alter the phase + AHV coefficients?
-%   3. How do the four explicitly named models compare in held-out R^2?
+%   1. Do phase + AHV coefficients differ by morph?
+%   2. How do the three primary models compare in held-out R^2?
+%   3. Is phase prediction stronger than AHV-only prediction?
 %   4. Does AHV add held-out information beyond phase?
-%   5. Is phase predictive beyond all measured behavior?
-%   6. Do all measured behavior predictors add information beyond phase?
-%   7. Are phase-amplitude estimates stable after adding AHV and controls?
+%   5. Is phase predictive beyond the AHV-only model?
+%   6. How does unique AHV contribution relate to phase-tuning consistency?
 %
 % IMPORTANT INTERPRETATION
 % ------------------------
-% * Because neural activity was z-scored, b0 is in activity-SD units.
+% * Because neural activity was z-scored identically within each neuron's fit
+%   window, raw b0 is in activity-SD units.
 % * Raw b1 and b2 are slopes per unit AHV (rad/s in the fitting script).
 %   They are comparable as physical gain only if AHV units, filtering and
 %   tau are identical for all morphs. This script checks saved settings.
@@ -60,14 +59,14 @@ function results = compare_HD_AHV_model_with_phase_only_behavior_params_across_m
 %
 % STATISTICS
 % ----------
-% * Omnibus three-morph Kruskal-Wallis test for every plotted fish-level metric.
-% * Two pre-specified pairwise Wilcoxon rank-sum comparisons by default:
+% * Three pre-specified two-group Kruskal-Wallis comparisons for every plotted
+%   fish-level metric:
 %       Molino - Surface, Pachon - Surface.
 % * Pairwise effect size: difference between fish-level medians, with a
 %   fish-level bootstrap 95% CI, plus Cliff's delta.
-% * Each Kruskal-Wallis test is the single omnibus test for its outcome and
-%   is reported without pooling it with biologically different outcomes.
-% * The two planned pairwise contrasts are reported without multiplicity
+% * No three-group omnibus test is run, so Molino-Pachon differences do not
+%   contribute to the requested Surface-referenced tests.
+% * The three planned pairwise contrasts are reported without multiplicity
 %   correction by default, as explicitly configured below.
 % * Within each morph, model scores are paired by fish and compared with
 %   sign-rank tests. Cross-morph tests on matched unique-contribution
@@ -77,7 +76,8 @@ function results = compare_HD_AHV_model_with_phase_only_behavior_params_across_m
 % -------
 %   cross_morph_HD_AHV_phase_only_behavior_augmented_analysis.mat
 %   README_analysis_notes.txt
-%   figures as PNG and SVG (no CSV or PDF files)
+%   fish_summary_raw_coefficients.csv
+%   figures as PNG and SVG (no PDF files)
 
 if nargin < 1 || isempty(cfg)
     cfg = pipeline_config();
@@ -91,17 +91,10 @@ P = struct();
 % Source-output contract. These labels are used in figures, legends,
 % statistical tables and the analysis notes. Keep this order everywhere.
 P.sourceFittingScript = ...
-    'fit_neuron_HD_AHV_four_models_behavior_tuned_cells_only_ROC.m';
-P.modelNames = { ...
-    'phase + AHV', ...
-    'phase + AHV + forward + vigor', ...
-    'phase', ...
-    'AHV + forward + vigor'};
-P.modelMetricNames = { ...
-    'median_cvR2Original', ...
-    'median_cvR2Full', ...
-    'median_cvR2PhaseOnly', ...
-    'median_cvR2Behavior'};
+    'fit_neuron_HD_AHV_three_models_behavior_tuned_cells_only_ROC.m';
+P.modelNames = {'phase + AHV', 'AHV', 'phase'};
+P.modelMetricNames = {'median_cvR2Original', 'median_cvR2Behavior', ...
+    'median_cvR2PhaseOnly'};
 
 % Input folders supplied by the user. Folder order does not determine plot
 % order; P.morphOrder below does.
@@ -109,13 +102,11 @@ P.inputs = struct( ...
     'morph', {'Surface','Molino','Pachon'}, ...
     'folder', {cfg.ModelDataDir, cfg.ModelDataDir, cfg.ModelDataDir});
 
-P.resultsFileName = ...
-    'HD_AHV_behavior_augmented_phase_tuned_only_with_phase_only_results.mat';
+P.resultsFileName = 'HD_AHV_three_models_phase_tuned_only_results.mat';
 for iInput = 1:numel(P.inputs)
     P.inputs(iInput).folder = cfg.ModelDataDir;
-    P.inputs(iInput).fileName = sprintf([ ...
-        'HD_AHV_behavior_augmented_phase_tuned_only_' ...
-        'with_phase_only_results_%s.mat'], ...
+    P.inputs(iInput).fileName = sprintf( ...
+        'HD_AHV_three_models_phase_tuned_only_results_%s.mat', ...
         lower(P.inputs(iInput).morph));
 end
 
@@ -134,6 +125,11 @@ P.exclusion.reason = ...
     'Sensitivity analysis: unusually high behavior-only cross-validated R2';
 P.exclusion.warnIfRequestedRecNotFound = true;
 
+% Animal identity. Prefer an explicit animal/fish ID saved upstream. A mapping
+% table can merge repeated recording IDs from the same animal. If neither is
+% available, session is retained as recording ID with an explicit warning.
+P.animalIdentity.sessionToAnimal = table();
+
 % Output. A timestamp prevents accidental overwriting of an earlier run.
 P.outputParent = cfg.ModelComparisonDir;
 P.addTimestampToOutput = false;
@@ -149,7 +145,7 @@ P.morphColors = [ ...
 % coefficient significance or functional class.
 P.quality.minFitSamples = 100;
 P.quality.requireFullDesignRank = true;
-P.quality.expectedDesignRank = 7;
+P.quality.expectedDesignRank = 4; % 3 predictors plus intercept
 P.quality.maxConditionNumber = 1e8;
 P.quality.minNeuronsPerFish = 5;
 P.quality.excludeByMaxVIF = false; % diagnostic by default, not an exclusion
@@ -160,6 +156,12 @@ P.quality.maxVIF = 10;
 P.cv.expectedBlockedFolds = 5;
 P.cv.requireExpectedFoldCount = true;
 
+% Fish-level model-performance exclusion.
+% A fish is excluded from every downstream analysis when its median
+% held-out R2 is below this threshold for at least one of the three models.
+P.fishR2Exclusion.enabled = true;
+P.fishR2Exclusion.threshold = -1;
+
 % Statistics.
 P.stats.alpha = 0.05;
 P.stats.minFishPerMorph = 3;
@@ -168,95 +170,66 @@ P.stats.bootstrapCI = [2.5 97.5];
 P.stats.randomSeed = 7;
 P.stats.pairwiseComparisons = { ...
     'Surface','Molino'; ...
-    'Surface','Pachon'};
-% The two contrasts are explicit planned comparisons and are left
+    'Surface','Pachon'; ...
+    'Molino','Pachon'};
+% The three contrasts are explicit planned comparisons and are left
 % uncorrected. Set this to 'bh' only if a corrected sensitivity analysis is
 % desired; Holm correction is intentionally not implemented in this script.
 P.stats.multipleComparisonMethod = 'none';
 
-% A Kruskal-Wallis test is already the single omnibus comparison across all
-% three morphs for one outcome. Leave these p-values unadjusted by default.
-% Set this true only if you explicitly want to correct omnibus tests across
-% the different metrics within each figure family.
+% Retained for saved-configuration compatibility. Three-group omnibus tests
+% are disabled; only the three planned pairwise KW tests are run.
 P.stats.correctOmnibusAcrossMetrics = false;
+
+% Phase-dominance inference below uses held-out blocked-CV R^2 values.
 P.stats.withinModelComparisons = { ...
-    'median_cvR2Original','median_cvR2Full', ...
-        'phase + AHV','phase + AHV + forward + vigor'; ...
-    'median_cvR2Original','median_cvR2PhaseOnly', ...
-        'phase + AHV','phase'; ...
-    'median_cvR2Original','median_cvR2Behavior', ...
-        'phase + AHV','AHV + forward + vigor'; ...
-    'median_cvR2Full','median_cvR2PhaseOnly', ...
-        'phase + AHV + forward + vigor','phase'; ...
-    'median_cvR2Full','median_cvR2Behavior', ...
-        'phase + AHV + forward + vigor','AHV + forward + vigor'; ...
-    'median_cvR2PhaseOnly','median_cvR2Behavior', ...
-        'phase','AHV + forward + vigor'};
+    'median_cvR2Original','median_cvR2Behavior','phase + AHV','AHV'; ...
+    'median_cvR2Original','median_cvR2PhaseOnly','phase + AHV','phase'; ...
+    'median_cvR2Behavior','median_cvR2PhaseOnly','AHV','phase'};
 P.stats.withinCoefficientComparisons = { ...
     'median_phaseOnlyB0_std','median_b0_std', ...
         'phase: standardized b0', ...
-        'phase + AHV + forward + vigor: standardized b0'; ...
+        'phase + AHV: standardized b0'; ...
     'median_phaseOnlyB0','median_originalB0', ...
         'phase: b0','phase + AHV: b0'; ...
     'median_phaseOnlyB0','median_b0_aug', ...
-        'phase: b0','phase + AHV + forward + vigor: b0'; ...
+        'phase: b0','phase + AHV: b0'; ...
     'median_originalB0','median_b0_aug', ...
-        'phase + AHV: b0','phase + AHV + forward + vigor: b0'; ...
+        'phase + AHV: b0','phase + AHV: b0'; ...
     'median_originalB1','median_b1_aug', ...
         'phase + AHV: signed b1', ...
-        'phase + AHV + forward + vigor: signed b1'; ...
+        'phase + AHV: signed b1'; ...
     'median_abs_originalB1','median_abs_b1_aug', ...
-        'phase + AHV: |b1|','phase + AHV + forward + vigor: |b1|'; ...
+        'phase + AHV: |b1|','phase + AHV: |b1|'; ...
     'median_originalB2','median_b2_aug', ...
         'phase + AHV: signed b2', ...
-        'phase + AHV + forward + vigor: signed b2'; ...
+        'phase + AHV: signed b2'; ...
     'median_abs_originalB2','median_abs_b2_aug', ...
-        'phase + AHV: |b2|','phase + AHV + forward + vigor: |b2|'};
+        'phase + AHV: |b2|','phase + AHV: |b2|'};
 
 % Secondary class-stratified description. This is useful for asking whether
 % an overall morph effect is due to class composition, but interpret it
 % cautiously because class membership was derived from these coefficients.
 P.classAnalysis.enabled = true;
-P.classAnalysis.classes = {'Symmetric','CW','CCW'};
+P.classAnalysis.classes = {'CW','CCW','Symmetric'};
 P.classAnalysis.minNeuronsPerFishClass = 5;
-
-% Optional ROC analysis. This is only scientifically defined when the
-% fitting output contains held-out (out-of-fold) observed activity and the
-% four matched held-out prediction traces for every neuron. The binary
-% target is observed z-scored activity > P.roc.activityThresholdZ. This is a
-% secondary activity-state discrimination analysis; it does not replace R^2.
-% Recommended table variable names are cvObserved, cvPredPhaseOnly,
-% cvPredOriginal, cvPredBehavior and cvPredFull; each row must contain a
-% numeric trace.
-P.roc.enabled = true;
-P.roc.requirePredictionTraces = false;
-P.roc.activityThresholdZ = 0;
-P.roc.fprGrid = linspace(0,1,101);
-P.roc.minPositiveFrames = 25;
-P.roc.minNegativeFrames = 25;
-P.roc.minNeuronsPerFish = 3;
-P.roc.observedVariableCandidates = { ...
-    'cvObserved','cvYObserved','yObservedCV','yTrueCV','yTrueOOF', ...
-    'cvYTrue','cvObservedActivity'};
-P.roc.phaseOnlyPredictionCandidates = { ...
-    'cvPredPhaseOnly','cvPredictionPhaseOnly','yHatPhaseOnlyCV', ...
-    'yPredPhaseOnlyOOF','oofPredPhaseOnly'};
-P.roc.originalPredictionCandidates = { ...
-    'cvPredOriginal','cvPredictionOriginal','yHatOriginalCV', ...
-    'yPredOriginalOOF','oofPredOriginal'};
-P.roc.behaviorPredictionCandidates = { ...
-    'cvPredBehavior','cvPredictionBehavior','yHatBehaviorCV', ...
-    'yPredBehaviorOOF','oofPredBehavior'};
-P.roc.fullPredictionCandidates = { ...
-    'cvPredFull','cvPredictionFull','yHatFullCV', ...
-    'yPredFullOOF','oofPredFull'};
 
 % Figure export.
 P.figure.visible = cfg.FigureVisible;       % 'on' for interactive inspection
 P.figure.savePNG = true;
 P.figure.dpi = 300;
 P.figure.pointSize = 46;
-P.figure.jitterWidth = 0.15;
+P.figure.jitterWidth = 0.11;
+P.figure.morphBarWidth = 0.46;
+P.figure.morphXLimits = [0.72 numel(P.morphOrder)+0.28];
+P.ahvDistribution.nBins = 81;
+P.ahvDistribution.tailPercentiles = [0.5 99.5];
+P.ahvDistribution.nPermutations = 10000;
+
+% Sample across the good-fit population and show distinct recording parts.
+P.examples.numberPerMorph = 10;
+P.examples.windowSeconds = 180;
+P.examples.scoreQuantiles = linspace(0.92,0.38,P.examples.numberPerMorph);
 
 rng(P.stats.randomSeed, 'twister');
 
@@ -264,41 +237,54 @@ rng(P.stats.randomSeed, 'twister');
 % transform: identity | abs
 % summary:   median | fraction_positive | mean
 Metrics = [ ...
+    ... % Primary raw coefficients from the fitted phase + AHV model
+    makeMetric('median_b0_raw', 'b0_raw', 'identity','median', ...
+        'Raw coefficient b_0 (fish median)', true, NaN), ...
+    makeMetric('median_b1_raw', 'b1_raw', 'identity','median', ...
+        'Raw coefficient b_1 (fish median)', true, 0), ...
+    makeMetric('median_b2_raw', 'b2_raw', 'identity','median', ...
+        'Raw coefficient b_2 (fish median)', true, 0), ...
     ... % phase model
     makeMetric('median_phaseOnlyB0',       'phaseOnlyB0', 'identity','median', ...
         'Median b_0: phase', true, NaN), ...
     makeMetric('median_phaseOnlyB0_std',   'phaseOnlyB0_std','identity','median', ...
         'Median standardized b_0: phase', true, NaN), ...
-    ... % phase + AHV + forward + vigor coefficients
+    ... % phase + AHV coefficients
     makeMetric('median_b0_aug',            'b0',          'identity','median', ...
-        'Median b_0: phase + AHV + forward + vigor', true, NaN), ...
+        'Median b_0: phase + AHV', true, NaN), ...
     makeMetric('median_b1_aug',            'b1',          'identity','median', ...
-        'Median signed b_1: phase + AHV + forward + vigor', true, 0), ...
+        'Median signed b_1: phase + AHV', true, 0), ...
     makeMetric('median_abs_b1_aug',        'b1',          'abs','median', ...
-        'Median |b_1|: phase + AHV + forward + vigor', true, NaN), ...
+        'Median |b_1|: phase + AHV', true, NaN), ...
     makeMetric('median_b2_aug',            'b2',          'identity','median', ...
-        'Median signed b_2: phase + AHV + forward + vigor', true, 0), ...
+        'Median signed b_2: phase + AHV', true, 0), ...
     makeMetric('median_abs_b2_aug',        'b2',          'abs','median', ...
-        'Median |b_2|: phase + AHV + forward + vigor', true, NaN), ...
+        'Median |b_2|: phase + AHV', true, NaN), ...
     makeMetric('fraction_b2_positive_aug', 'b2',          'identity','fraction_positive', ...
-        'Fraction b_2 > 0: phase + AHV + forward + vigor', true, 0.5), ...
-    ... % Exactly matched four-model five-fold contiguous blocked CV
+        'Fraction b_2 > 0: phase + AHV', true, 0.5), ...
+    ... % Exactly matched three-model five-fold contiguous blocked CV
     makeMetric('median_cvR2PhaseOnly',     'cvR2PhaseOnly','identity','median', ...
         'Median blocked-CV R^2: phase', true, 0), ...
     makeMetric('median_cvR2Original',      'cvR2Original','identity','median', ...
         'Median blocked-CV R^2: phase + AHV', true, 0), ...
     makeMetric('median_cvR2Behavior',      'cvR2Behavior','identity','median', ...
-        'Median blocked-CV R^2: AHV + forward + vigor', true, 0), ...
+        'Median blocked-CV R^2: AHV-only', true, 0), ...
     makeMetric('median_cvR2Full',          'cvR2Full',    'identity','median', ...
-        'Median blocked-CV R^2: phase + AHV + forward + vigor', true, 0), ...
+        'Median blocked-CV R^2: phase + AHV', true, 0), ...
+    makeMetric('median_deltaR2Phase','deltaR2Phase','identity','median', ...
+        'Median Delta R^2 phase: phase + AHV minus AHV', true, 0), ...
+    makeMetric('median_deltaR2Behavior','deltaR2Behavior','identity','median', ...
+        'Median Delta R^2 AHV: phase + AHV minus phase', true, 0), ...
+    makeMetric('median_phaseDominanceR2','phaseDominanceR2','identity','median', ...
+        'Blocked-CV phase dominance (fish median; Delta R^2_phase minus Delta R^2_AHV)', true, 0), ...
     makeMetric('median_cvDeltaR2AddedBehavior','cvDeltaR2AddedBehavior','identity','median', ...
-        'Median DeltaCV-R^2: adding forward + vigor to phase + AHV', true, 0), ...
+        'Median \DeltaCV R^2: adding forward + vigor to phase + AHV', true, 0), ...
     makeMetric('median_cvUniqueAddedBehavior','cvUniqueAddedBehavior','identity','median', ...
         'Median unique forward + vigor beyond phase + AHV', true, 0), ...
     makeMetric('median_cvDeltaR2Phase',    'cvDeltaR2Phase','identity','median', ...
-        'Median DeltaCV-R^2: adding phase to AHV + forward + vigor', true, 0), ...
+        'Median ΔCV ^2: adding phase to AHV-only', true, 0), ...
     makeMetric('median_cvUniquePhase',     'cvUniquePhase','identity','median', ...
-        'Median unique phase beyond AHV + forward + vigor', true, 0), ...
+        'Median unique phase beyond AHV-only', true, 0), ...
     makeMetric('median_cvDeltaR2AHVBeyondPhase','cvDeltaR2AHVBeyondPhase', ...
         'identity','median', ...
         'Median DeltaCV-R^2: adding AHV to phase', true, 0), ...
@@ -315,21 +301,21 @@ Metrics = [ ...
         'identity','mean','Fraction neurons: phase + AHV > phase', false, 0.5), ...
     makeMetric('fraction_full_better_phaseOnly','fullBetterPhaseOnly', ...
         'identity','mean', ...
-        'Fraction neurons: phase + AHV + forward + vigor > phase', false, 0.5), ...
+        'Fraction neurons: phase + AHV > phase', false, 0.5), ...
     makeMetric('fraction_full_better_original','fullBetterOriginal','identity','mean', ...
-        'Fraction neurons: phase + AHV + forward + vigor > phase + AHV', ...
+        'Fraction neurons: phase + AHV > phase + AHV', ...
         false, 0.5), ...
     makeMetric('fraction_full_better_behavior','fullBetterBehavior','identity','mean', ...
-        'Fraction neurons: phase + AHV + forward + vigor > AHV + forward + vigor', ...
+        'Fraction neurons: phase + AHV > AHV + forward + vigor', ...
         false, 0.5), ...
     makeMetric('fraction_cvR2PhaseOnly_positive','cvR2PhaseOnly','identity', ...
         'fraction_positive','Fraction phase CV-R^2 > 0', false, 0.5), ...
     makeMetric('fraction_cvR2Original_positive','cvR2Original','identity','fraction_positive', ...
         'Fraction phase + AHV CV-R^2 > 0', false, 0.5), ...
     makeMetric('fraction_cvR2Behavior_positive','cvR2Behavior','identity','fraction_positive', ...
-        'Fraction AHV + forward + vigor CV-R^2 > 0', false, 0.5), ...
+        'Fraction AHV-only CV-R^2 > 0', false, 0.5), ...
     makeMetric('fraction_cvR2Full_positive','cvR2Full','identity','fraction_positive', ...
-        'Fraction phase + AHV + forward + vigor CV-R^2 > 0', false, 0.5), ...
+        'Fraction phase + AHV CV-R^2 > 0', false, 0.5), ...
     ... % Added behavioral controls; standardized values are primary
     makeMetric('median_bF_std',            'bF_std',      'identity','median', ...
         'Median standardized b_F', true, 0), ...
@@ -374,23 +360,23 @@ Metrics = [ ...
         'identity','median','Median Delta b_0: phase + AHV minus phase', false, 0), ...
     makeMetric('median_deltaB0_AllBehaviorBeyondPhase','deltaB0FromPhaseOnlyToFull', ...
         'identity','median', ...
-        'Median Delta b_0: phase + AHV + forward + vigor minus phase', false, 0), ...
+        'Median Delta b_0: phase + AHV minus phase', false, 0), ...
     makeMetric('median_abs_prefShift_AHVBeyondPhase', ...
         'absPrefShiftOriginalFromPhaseOnlyDeg','identity','median', ...
         'Median |phase shift|: phase + AHV vs phase (deg)', false, 0), ...
     makeMetric('median_abs_prefShift_AllBehaviorBeyondPhase', ...
         'absPrefShiftFullFromPhaseOnlyDeg','identity','median', ...
-        'Median |phase shift|: phase + AHV + forward + vigor vs phase (deg)', ...
+        'Median |phase shift|: phase + AHV vs phase (deg)', ...
         false, 0), ...
     ... % Cross-morph standardized phase/AHV sensitivity controls
     makeMetric('median_b0_std',            'b0_std',      'identity','median', ...
-        'Median standardized b_0: phase + AHV + forward + vigor', false, NaN), ...
+        'Median standardized b_0: phase + AHV', false, NaN), ...
     makeMetric('median_b1_std',            'b1_std',      'identity','median', ...
-        'Median standardized b_1: phase + AHV + forward + vigor', false, 0), ...
+        'Median standardized b_1: phase + AHV', false, 0), ...
     makeMetric('median_abs_b1_std',        'b1_std',      'abs','median', ...
         'Median |standardized b_1|', false, NaN), ...
     makeMetric('median_b2_std',            'b2_std',      'identity','median', ...
-        'Median standardized b_2: phase + AHV + forward + vigor', false, 0), ...
+        'Median standardized b_2: phase + AHV', false, 0), ...
     makeMetric('median_abs_b2_std',        'b2_std',      'abs','median', ...
         'Median |standardized b_2|', false, NaN), ...
     ... % Variance partitioning and diagnostics
@@ -416,60 +402,48 @@ Metrics = [ ...
         'Median standardized condition number', false, NaN), ...
     ... % Interpretable positive/negative AHV gains
     makeMetric('median_gPositive',         'gPositive','identity','median', ...
-        'Median gain for positive AHV', false, 0), ...
+        'Raw coefficient gain for positive AHV (fish median)', false, 0), ...
     makeMetric('median_gNegative',         'gNegative','identity','median', ...
-        'Median gain for negative AHV magnitude', false, 0), ...
-    makeMetric('median_directionalStrength','directionalStrength','identity','median', ...
-        'Median directional AHV strength', false, NaN), ...
+        'Raw coefficient gain for negative AHV (fish median)', false, 0), ...
+    makeMetric('median_overallRawAHVStrength', ...
+        'overallRawAHVStrength','identity','median', ...
+        'Overall raw AHV coefficient strength (fish median)', false, NaN), ...
+    makeMetric('median_c0_raw', 'c0','identity','median', ...
+        'Raw intercept c_0 (fish median)', false, 0), ...
     makeMetric('median_directionalAsymmetry','directionalAsymmetry','identity','median', ...
         'Median normalized directional asymmetry', false, 0)];
 
 modelR2MetricNames = P.modelMetricNames;
-phaseAmplitudeMetricNames = {'median_originalB0','median_b0_aug', ...
-    'median_phaseOnlyB0'};
-behaviorCoefficientMetricNames = {'median_bF_std','median_abs_bF_std', ...
-    'median_bV_std','median_abs_bV_std'};
 
 % Only these outcomes are plotted and included in the revised inferential
 % families. Keeping the full Metrics array above preserves all requested CSV
 % summaries without generating inferential rows for unused diagnostics.
-uniqueVarianceMetricNames = {'median_cvUniquePhase', ...
-    'median_cvUniqueAHVBeyondPhase', ...
-    'median_cvUniqueAllBehaviorBeyondPhase', ...
-    'median_cvUniqueAddedBehavior'};
-signedCoefficientShiftMetricNames = {'median_deltaB0_controls', ...
-    'median_deltaB1_controls','median_deltaB2_controls'};
-signedStandardizedMetricNames = {'median_phaseOnlyB0_std','median_b0_std', ...
-    'median_b1_std','median_b2_std'};
-reducedGainMetricNames = {'median_gPositive','median_gNegative', ...
-    'median_directionalStrength'};
-classCoefficientMetricNames = {'median_phaseOnlyB0_std','median_b0_std', ...
-    'median_b1_std','median_b2_std'};
-classModelPerformanceMetricNames = modelR2MetricNames;
-classUniqueVarianceMetricNames = {'median_cvUniquePhase', ...
-    'median_cvUniqueAHVBeyondPhase','median_cvUniqueAllBehaviorBeyondPhase'};
+primaryRawCoefficientMetricNames = {'median_b0_raw','median_b1_raw', ...
+    'median_b2_raw'};
+incrementalR2MetricNames = {'median_deltaR2Phase','median_deltaR2Behavior'};
+phaseDominanceMetricNames = {'median_phaseDominanceR2'};
+classCoefficientMetricNames = primaryRawCoefficientMetricNames;
+classPhaseDominanceMetricNames = phaseDominanceMetricNames;
 classMetricNames = unique([classCoefficientMetricNames, ...
-    classModelPerformanceMetricNames,classUniqueVarianceMetricNames],'stable');
+    classPhaseDominanceMetricNames],'stable');
 
 StatFamilies = [ ...
     makeFamily('model_cv', modelR2MetricNames), ...
-    makeFamily('unique_variance', uniqueVarianceMetricNames), ...
-    makeFamily('phase_amplitude', phaseAmplitudeMetricNames), ...
-    makeFamily('forward_vigor', behaviorCoefficientMetricNames), ...
-    makeFamily('signed_coefficient_change', signedCoefficientShiftMetricNames), ...
-    makeFamily('standardized_phase_AHV', signedStandardizedMetricNames), ...
-    makeFamily('directional_AHV_gain', reducedGainMetricNames)];
+    makeFamily('raw_phase_AHV_coefficients', primaryRawCoefficientMetricNames), ...
+    makeFamily('incremental_R2', incrementalR2MetricNames), ...
+    makeFamily('phase_dominance_R2', phaseDominanceMetricNames)];
 statsMetricNames = unique([StatFamilies.metrics], 'stable');
 StatsMetrics = selectMetrics(Metrics, statsMetricNames);
 
 %% ======================== LOAD ALL MORPHS ========================
-fprintf('\nLoading matched four-model outputs from %s...\n', ...
+fprintf('\nLoading matched three-model outputs from %s...\n', ...
     P.sourceFittingScript);
 [AllNeurons, InputReport, ExclusionReport] = loadAllMorphResults(P);
 assert(~isempty(AllNeurons), 'No neuron tables were loaded. Check P.inputs.');
 
 AllNeurons = addDerivedNeuronVariables(AllNeurons);
-requiredVariables = unique([{Metrics.source}, {'session','morph','fishKey'}]);
+requiredVariables = unique([{Metrics.source}, ...
+    {'session','animalID','morph','fishKey'}]);
 missing = setdiff(requiredVariables, AllNeurons.Properties.VariableNames);
 assert(isempty(missing), 'AllNeurons is missing required variables: %s', ...
     strjoin(missing, ', '));
@@ -478,7 +452,7 @@ AllNeurons.baseQualityOK = makeBaseQualityMask(AllNeurons, P);
 
 fprintf('Loaded %d neurons from %d fish.\n', height(AllNeurons), ...
     numel(unique(AllNeurons.fishKey)));
-fprintf('Matched finite four-model CV outputs: %d/%d quality-passing neurons.\n', ...
+fprintf('Matched finite three-model CV outputs: %d/%d quality-passing neurons.\n', ...
     sum(AllNeurons.baseQualityOK & AllNeurons.cvQuartetOK), ...
     sum(AllNeurons.baseQualityOK));
 for m = 1:numel(P.morphOrder)
@@ -500,6 +474,79 @@ fprintf('Output directory:\n  %s\n', outputDir);
 
 %% ======================== FISH-LEVEL SUMMARIES ========================
 FishMetrics = buildFishSummaryTable(AllNeurons, Metrics, P, 'all');
+
+% Exclude a complete fish if its fish-median held-out R2 is below the
+% threshold for at least one of the three fitted models.
+R2FishExclusionReport = table();
+
+if P.fishR2Exclusion.enabled
+    r2MetricNames = P.modelMetricNames;
+    r2Values = FishMetrics{:,r2MetricNames};
+
+    % NaN values do not trigger this particular exclusion. A fish is
+    % excluded when at least one available model median is strictly < -1.
+    failedModelMask = isfinite(r2Values) & ...
+        r2Values < P.fishR2Exclusion.threshold;
+    excludeFish = any(failedModelMask,2);
+
+    reportVariables = [ ...
+        {'morph','animalID','recordingID','fishKey'}, ...
+        r2MetricNames];
+
+    R2FishExclusionReport = ...
+        FishMetrics(excludeFish,reportVariables);
+
+    excludedRows = find(excludeFish);
+    failedModels = cell(numel(excludedRows),1);
+
+    for iExcluded = 1:numel(excludedRows)
+        row = excludedRows(iExcluded);
+        failedModels{iExcluded} = strjoin( ...
+            P.modelNames(failedModelMask(row,:)),', ');
+    end
+
+    R2FishExclusionReport.failedModels = failedModels;
+    R2FishExclusionReport.threshold = repmat( ...
+        P.fishR2Exclusion.threshold, ...
+        height(R2FishExclusionReport),1);
+
+    excludedFishKeys = FishMetrics.fishKey(excludeFish);
+
+    fprintf(['\nFish-level model-R2 exclusion: %d/%d fish excluded ' ...
+        '(at least one median held-out R2 < %.3f).\n'], ...
+        nnz(excludeFish),height(FishMetrics), ...
+        P.fishR2Exclusion.threshold);
+
+    if ~isempty(R2FishExclusionReport)
+        disp(R2FishExclusionReport(:,{ ...
+            'morph','animalID','recordingID', ...
+            'median_cvR2Original','median_cvR2Behavior', ...
+            'median_cvR2PhaseOnly','failedModels'}));
+    end
+
+    % Remove all neurons belonging to excluded animals. This propagates the
+    % exclusion to ROC, class-stratified and any neuron-derived analyses.
+    AllNeurons(ismember(AllNeurons.fishKey,excludedFishKeys),:) = [];
+
+    % Remove the corresponding fish-level rows used by all primary plots
+    % and statistical analyses.
+    FishMetrics(excludeFish,:) = [];
+end
+
+assert(~isempty(FishMetrics), ...
+    'All fish were excluded by the fish-level held-out R2 criterion.');
+
+B1PositiveStats = runPositiveB1Tests(FishMetrics,P);
+[RepresentativeExamples,AHVRegressorFish,AHVRegressorSamples] = ...
+    buildRepresentativeExamplesAndAHVSummary(AllNeurons,P);
+AHVRegressorStats = runAHVRegressorStats( ...
+    AHVRegressorFish,AHVRegressorSamples,P);
+
+FishRawCoefficientSummary = FishMetrics(:, {'morph','animalID', ...
+    'recordingID','nNeuronsQuality','median_b0_raw','median_b1_raw', ...
+    'median_b2_raw'});
+FishRawCoefficientSummary.Properties.VariableNames{'nNeuronsQuality'} = ...
+    'numberOfNeurons';
 ModelDefinitions = buildModelDefinitionTable(P);
 
 % Morph estimates are medians across fish with fish-level bootstrap CIs.
@@ -511,6 +558,9 @@ MorphEstimates = computeMorphEstimates(FishMetrics, Metrics, P);
     FishMetrics, StatsMetrics, P, 'All selected phase-tuned neurons');
 [OmnibusStats, PairwiseStats] = applyConfiguredCorrections( ...
     OmnibusStats, PairwiseStats, StatFamilies, P);
+fprintf('\nPrimary planned two-group KW tests: raw coefficients, one fish median per animal\n');
+rawPairRows = ismember(PairwiseStats.metric, primaryRawCoefficientMetricNames);
+disp(PairwiseStats(rawPairRows, {'metricLabel','test','groupA','groupB','nA','nB','pRaw'}));
 
 % Paired model tests use one aggregate CV score per fish. They do not treat
 % neurons or folds as independent n. Model-difference metrics above are also
@@ -518,71 +568,34 @@ MorphEstimates = computeMorphEstimates(FishMetrics, Metrics, P);
 [WithinModelStats, ModelFriedmanStats] = runWithinMorphModelStats(FishMetrics, P);
 WithinCoefficientStats = runWithinMorphPairedStats( ...
     FishMetrics,P.stats.withinCoefficientComparisons,P);
+IncrementalR2Stats = runWithinMorphPairedStats(FishMetrics,{ ...
+    'median_deltaR2Phase','median_deltaR2Behavior', ...
+    'Delta R2 phase','Delta R2 behavior'},P);
 
 %% ======================== PRIMARY FIGURES ========================
-plotFishLevelMetrics(FishMetrics, Metrics, modelR2MetricNames, ...
-    OmnibusStats, PairwiseStats, P, outputDir, ...
-    'Matched four-model blocked cross-validation: cross-morph comparison', ...
-    '01_cross_morph_four_model_CV_R2');
-
 plotPairedModelCV(FishMetrics,WithinModelStats,ModelFriedmanStats,P, ...
-    outputDir,'02_within_morph_paired_four_model_CV_R2');
+    outputDir,'02_within_morph_paired_three_model_CV_R2');
 
-% ROC requires saved held-out traces; aggregate R^2 values cannot be
-% converted into a valid ROC curve. The analysis is skipped with an explicit
-% warning when those traces are absent.
-FishROC = table();
-ROCPairedStats = table();
-ROCFriedmanStats = table();
-if P.roc.enabled
-    [FishROC, rocColumns] = computeFishROCFromOOFTraces(AllNeurons, P);
-    if isempty(FishROC)
-        msg = ['ROC not generated: no compatible out-of-fold observed and ' ...
-            'prediction trace columns were found. Save these traces in the ' ...
-            'fitting output; aggregate CV-R^2 is insufficient for ROC/AUC.'];
-        if P.roc.requirePredictionTraces; error(msg); else; warning(msg); end
-    else
-        [ROCPairedStats, ROCFriedmanStats] = runROCModelStats(FishROC,P);
-        plotModelROC(FishROC,ROCFriedmanStats,P,outputDir, ...
-            '03_four_model_ROC_AUC');
-        fprintf(['ROC columns: observed=%s, phase + AHV=%s, ' ...
-            'phase + AHV + forward + vigor=%s, phase=%s, ' ...
-            'AHV + forward + vigor=%s\n'],rocColumns.observed, ...
-            rocColumns.original,rocColumns.full,rocColumns.phaseOnly, ...
-            rocColumns.behavior);
-    end
-end
+plotRepresentativeExamples(RepresentativeExamples,P,outputDir, ...
+    'representative_phase_tuned_neurons');
+plotAHVRegressorDistributions(AHVRegressorFish,AHVRegressorSamples, ...
+    AHVRegressorStats,P,outputDir, ...
+    'cross_morph_abs_AHV_regressor_distribution');
 
-plotFishLevelMetrics(FishMetrics, Metrics, uniqueVarianceMetricNames, ...
+plotFishLevelMetrics(FishMetrics, Metrics, primaryRawCoefficientMetricNames, ...
     OmnibusStats, PairwiseStats, P, outputDir, ...
-    'Matched cross-validated unique phase and behavior contributions', ...
-    '04_cross_validated_unique_variance');
+    'Primary morph comparison: raw coefficients (fish medians)', ...
+    '06_primary_raw_coefficients_fish_medians');
 
-plotFishLevelMetrics(FishMetrics, Metrics, phaseAmplitudeMetricNames, ...
-    OmnibusStats, PairwiseStats, P, outputDir, ...
-    'Phase amplitude across nested models', ...
-    '05_phase_amplitude_across_nested_models');
+IncrementalR2PlotSummary = plotPairedIncrementalR2( ...
+    FishMetrics,IncrementalR2Stats,P,outputDir, ...
+    '10_paired_incremental_delta_R2_phase_behavior');
 
-plotFishLevelMetrics(FishMetrics, Metrics, behaviorCoefficientMetricNames, ...
+plotFishLevelMetrics(FishMetrics, Metrics, phaseDominanceMetricNames, ...
     OmnibusStats, PairwiseStats, P, outputDir, ...
-    'Behavior-control coefficients (standardized for cross-morph comparison)', ...
-    '06_standardized_forward_vigor_coefficients');
-
-plotFishLevelMetrics(FishMetrics, Metrics, signedCoefficientShiftMetricNames, ...
-    OmnibusStats, PairwiseStats, P, outputDir, ...
-    'Signed coefficient changes after adding behavior controls', ...
-    '07_signed_coefficient_changes_after_behavior_controls');
-
-plotFishLevelMetrics(FishMetrics, Metrics, signedStandardizedMetricNames, ...
-    OmnibusStats, PairwiseStats, P, outputDir, ...
-    ['Standardized coefficients: phase and ' ...
-        'phase + AHV + forward + vigor'], ...
-    '08_signed_standardized_phase_AHV_coefficients');
-
-plotFishLevelMetrics(FishMetrics, Metrics, reducedGainMetricNames, ...
-    OmnibusStats, PairwiseStats, P, outputDir, ...
-    'Positive- and negative-AHV gain re-expression', ...
-    '09_direction_specific_AHV_gains');
+    ['Cross-morph blocked-CV phase dominance: positive values indicate ' ...
+        'stronger held-out phase than AHV-only prediction'], ...
+    'cross_morph_phase_dominance_R2');
 
 %% ======================== CLASS-STRATIFIED ANALYSIS ========================
 FishClassMetrics = table();
@@ -613,34 +626,51 @@ if P.classAnalysis.enabled
             ClassOmnibusStats, ClassPairwiseStats, P, outputDir, ...
             '10_class_stratified_coefficients');
 
-        classModelPerformanceMetrics = selectMetrics(Metrics, ...
-            classModelPerformanceMetricNames);
+        classPhaseDominanceMetrics = selectMetrics(Metrics, ...
+            classPhaseDominanceMetricNames);
         plotClassStratifiedMetrics(FishClassMetrics, ...
-            classModelPerformanceMetrics, ...
+            classPhaseDominanceMetrics, ...
             ClassOmnibusStats, ClassPairwiseStats, P, outputDir, ...
-            '11_class_stratified_four_model_CV_R2');
+            '11_class_stratified_three_model_CV_R2');
 
-        classUniqueVarianceMetrics = selectMetrics(Metrics, ...
-            classUniqueVarianceMetricNames);
-        plotClassStratifiedMetrics(FishClassMetrics, ...
-            classUniqueVarianceMetrics, ...
-            ClassOmnibusStats, ClassPairwiseStats, P, outputDir, ...
-            '12_class_stratified_unique_variance');
     else
         warning('No class variable found. Skipping class-stratified analysis.');
     end
 end
 
 %% ======================== SAVE COMPLETE WORKSPACE ========================
+IncrementalR2FigureMetadata = struct( ...
+    'png',fullfile(outputDir,'10_paired_incremental_delta_R2_phase_behavior.png'), ...
+    'svg',fullfile(outputDir,'10_paired_incremental_delta_R2_phase_behavior.svg'), ...
+    'summaryCSV',fullfile(outputDir, ...
+        '10_paired_incremental_delta_R2_phase_behavior_summary.csv'), ...
+    'center','mean across fish-level neuron medians', ...
+    'interval','fish-bootstrap 95% confidence interval', ...
+    'tests','paired within-morph fish-level sign-rank tests');
 save(fullfile(outputDir, ...
     'cross_morph_HD_AHV_phase_only_behavior_augmented_analysis.mat'), ...
     'P', 'Metrics', 'StatsMetrics', 'StatFamilies', ...
     'AllNeurons', 'FishMetrics', 'MorphEstimates', ...
     'OmnibusStats', 'PairwiseStats', 'FishClassMetrics', ...
     'ClassOmnibusStats', 'ClassPairwiseStats', 'WithinModelStats', ...
-    'ModelFriedmanStats', 'WithinCoefficientStats', 'FishROC', ...
-    'ROCPairedStats','ROCFriedmanStats','InputReport','ModelDefinitions', ...
-    'ExclusionReport','-v7.3');
+    'ModelFriedmanStats', 'WithinCoefficientStats', 'IncrementalR2Stats', ...
+    'InputReport','ModelDefinitions','ExclusionReport', ...
+    'R2FishExclusionReport','FishRawCoefficientSummary', ...
+    'IncrementalR2PlotSummary','B1PositiveStats', ...
+    'RepresentativeExamples','AHVRegressorFish','AHVRegressorSamples', ...
+    'AHVRegressorStats', ...
+    'IncrementalR2FigureMetadata','-v7.3');
+writetable(FishRawCoefficientSummary, fullfile(outputDir, ...
+    'fish_summary_raw_coefficients.csv'));
+writetable(B1PositiveStats,fullfile(outputDir,"b1_positive_within_morph_tests.csv"));
+writetable(AHVRegressorFish,fullfile(outputDir,"fish_AHV_summaries.csv"));
+writetable(AHVRegressorStats,fullfile(outputDir,"cross_morph_AHV_summary_tests.csv"));
+writetable(IncrementalR2PlotSummary,fullfile(outputDir, ...
+    '10_paired_incremental_delta_R2_phase_behavior_summary.csv'));
+if ~isempty(R2FishExclusionReport)
+    writetable(R2FishExclusionReport,fullfile(outputDir, ...
+        'fish_excluded_by_median_model_cvR2.csv'));
+end
 
 writeAnalysisNotes(outputDir, P);
 
@@ -648,10 +678,28 @@ fprintf('\nDone. Main inferential n is the number of fish, not neurons.\n');
 fprintf('Results saved in:\n%s\n', outputDir);
 
 results = struct('outputDir', outputDir, ...
-    'fishMetrics', FishMetrics, 'morphEstimates', MorphEstimates, ...
+    'allNeurons',AllNeurons,'fishMetrics', FishMetrics, 'morphEstimates', MorphEstimates, ...
     'omnibusStatistics', OmnibusStats, ...
     'pairwiseStatistics', PairwiseStats, ...
-    'inputReport', InputReport, 'exclusionReport', ExclusionReport);
+    'inputReport', InputReport, 'exclusionReport', ExclusionReport, ...
+    'r2FishExclusionReport',R2FishExclusionReport, ...
+    'b1PositiveStats',B1PositiveStats, ...
+    'representativeExamples',RepresentativeExamples, ...
+    'ahvRegressorFish',AHVRegressorFish,'ahvRegressorStats',AHVRegressorStats, ...
+    'ahvRegressorSamples',AHVRegressorSamples, ...
+    'ahvRegressorFigurePNG',fullfile(outputDir, ...
+        'cross_morph_abs_AHV_regressor_distribution.png'), ...
+    'ahvRegressorFigureSVG',fullfile(outputDir, ...
+        'cross_morph_abs_AHV_regressor_distribution.svg'), ...
+    'phaseDominanceStatistics',PairwiseStats(strcmp(PairwiseStats.metric, ...
+        'median_phaseDominanceR2'),:), ...
+    'phaseDominanceFigurePNG',fullfile(outputDir,'cross_morph_phase_dominance_R2.png'), ...
+    'phaseDominanceFigureSVG',fullfile(outputDir,'cross_morph_phase_dominance_R2.svg'), ...
+    'incrementalR2PlotSummary',IncrementalR2PlotSummary, ...
+    'incrementalR2FigureMetadata',IncrementalR2FigureMetadata, ...
+    'incrementalR2FigurePNG',fullfile(outputDir,'10_paired_incremental_delta_R2_phase_behavior.png'), ...
+    'incrementalR2FigureSVG',fullfile(outputDir,'10_paired_incremental_delta_R2_phase_behavior.svg'), ...
+    'incrementalR2SummaryCSV',fullfile(outputDir,'10_paired_incremental_delta_R2_phase_behavior_summary.csv'));
 end
 
 %% ======================== LOCAL FUNCTIONS ========================
@@ -664,14 +712,12 @@ end
 
 function T = buildModelDefinitionTable(P)
 displayName = P.modelNames(:);
-savedCVField = {'cvR2Original';'cvR2Full'; ...
-    'cvR2PhaseOnly';'cvR2Behavior'};
-savedFitPrefix = {'original';'augmented';'phaseOnly';'behavior'};
+savedCVField = {'cvR2Original';'cvR2Behavior';'cvR2PhaseOnly'};
+savedFitPrefix = {'original';'behavior';'phaseOnly'};
 formula = { ...
     'cos(phi) + sin(phi) + |AHV| + AHV'; ...
-    'cos(phi) + sin(phi) + |AHV| + AHV + forward + vigor'; ...
-    'cos(phi) + sin(phi)'; ...
-    '|AHV| + AHV + forward + vigor'};
+    '|AHV| + AHV'; ...
+    'cos(phi) + sin(phi)'};
 sourceFittingScript = repmat({P.sourceFittingScript},numel(displayName),1);
 T = table(displayName,savedFitPrefix,savedCVField,formula,sourceFittingScript);
 end
@@ -704,6 +750,7 @@ phaseOnlyModelFormula = cell(nInput,1);
 behaviorModelFormula = cell(nInput,1);
 sourceFittingScript = repmat({P.sourceFittingScript},nInput,1);
 cvScheme = repmat({'contiguous blocked'},nInput,1);
+animalIDSource = cell(nInput,1);
 
 for i = 1:nInput
     morph{i} = P.inputs(i).morph;
@@ -726,11 +773,12 @@ for i = 1:nInput
     else
         error('No AllNeurons table or Results cell found in %s', filePath);
     end
-    validateFourModelOutputTable(T,filePath,P);
+    validateThreeModelOutputTable(T,filePath,P);
 
     assert(ismember('session', T.Properties.VariableNames), ...
         'The table in %s has no session variable.', filePath);
     T.session = normalizeTextColumn(T.session);
+    [T.animalID, animalIDSource{i}] = resolveAnimalIDs(T, P.animalIdentity);
     nFishBeforeExclusion(i) = numel(unique(T.session));
     nNeuronsBeforeExclusion(i) = height(T);
 
@@ -757,7 +805,8 @@ for i = 1:nInput
         'All rows for %s were excluded. Check P.exclusion.recNumbers.', morph{i});
 
     T.morph = repmat(morph(i), height(T), 1);
-    T.fishKey = strcat(T.morph, {'__'}, T.session);
+    T.recordingID = T.session;
+    T.fishKey = strcat(T.morph, {'__'}, T.animalID);
 
     % Normalize the class column when present.
     if ismember('class', T.Properties.VariableNames)
@@ -799,7 +848,7 @@ InputReport = table(morph, resultFile, nFishBeforeExclusion, ...
     nNeuronsBeforeExclusion, nFishExcluded, nNeuronsExcluded, ...
     nFish, nNeurons, ahvTauSeconds, ...
     nBlockedCVFolds, minTestSamplesPerFold, minRotationsEachDirection, ...
-    zscoreActivity, cvScheme, sourceFittingScript, originalModelFormula, ...
+    zscoreActivity, cvScheme, animalIDSource, sourceFittingScript, originalModelFormula, ...
     augmentedModelFormula, phaseOnlyModelFormula, behaviorModelFormula);
 
 if P.exclusion.enabled && P.exclusion.warnIfRequestedRecNotFound
@@ -816,11 +865,29 @@ warnIfInconsistent(InputReport.nBlockedCVFolds, 'number of blocked CV folds');
 warnIfInconsistent(InputReport.minTestSamplesPerFold, 'minimum test samples per fold');
 warnIfInconsistent(InputReport.minRotationsEachDirection, ...
     'low-turn rotations-per-direction threshold');
+
 warnIfInconsistent(InputReport.zscoreActivity, 'activity z-scoring setting');
+finiteZ=InputReport.zscoreActivity(isfinite(InputReport.zscoreActivity));
+if numel(finiteZ)~=nInput || numel(unique(finiteZ))~=1
+    error(['Neural-response coefficients are not comparable: activity z-scoring ' ...
+        'is missing or differs across morph files.']);
+end
+finiteTau = InputReport.ahvTauSeconds(isfinite(InputReport.ahvTauSeconds));
+if numel(finiteTau) ~= nInput || numel(unique(finiteTau)) ~= 1
+    error(['Raw AHV coefficients are not comparable: the saved AHV filter ' ...
+        'tau is missing or differs across morphs.']);
+end
+if finiteZ(1)==1
+    responseScale='per-neuron z-scored activity';
+else
+    responseScale='raw F/F0 activity (deltaFoF + 1)';
+end
+fprintf('Scaling check passed: %s; unstandardized AHV predictor with shared tau %.3g s.\n', ...
+    responseScale,finiteTau(1));
 nonemptyFormula = InputReport.augmentedModelFormula( ...
     ~cellfun(@isempty, InputReport.augmentedModelFormula));
 if numel(unique(nonemptyFormula)) > 1
-    warning(['Saved phase + AHV + forward + vigor formulas are not ' ...
+    warning(['Saved phase + AHV formulas are not ' ...
         'identical across morph files.']);
 end
 nonemptyFormula = InputReport.originalModelFormula( ...
@@ -836,8 +903,10 @@ end
 nonemptyFormula = InputReport.behaviorModelFormula( ...
     ~cellfun(@isempty,InputReport.behaviorModelFormula));
 if numel(unique(nonemptyFormula)) > 1
-    warning(['Saved AHV + forward + vigor formulas are not identical ' ...
-        'across morph files.']);
+    warning('Saved AHV formulas are not identical across morph files.');
+end
+if any(contains(lower(string(nonemptyFormula)), {'forward','vigor'}), 'all')
+    error('Loaded outputs still contain forward or vigor in the AHV-only model. Refit the three models.');
 end
 finiteFolds = InputReport.nBlockedCVFolds(isfinite(InputReport.nBlockedCVFolds));
 if P.cv.requireExpectedFoldCount && ...
@@ -847,6 +916,38 @@ if P.cv.requireExpectedFoldCount && ...
         'P.cv.requireExpectedFoldCount=false for exploratory loading.'], ...
         P.cv.expectedBlockedFolds);
 end
+end
+
+function [animalID, source] = resolveAnimalIDs(T, A)
+% Prefer a true animal identifier; use a supplied map to merge recordings.
+candidates = {'animalID','animalId','fishID','fishId','animal','fish'};
+source = '';
+for k = 1:numel(candidates)
+    if ismember(candidates{k}, T.Properties.VariableNames)
+        animalID = normalizeTextColumn(T.(candidates{k}));
+        source = ['table.' candidates{k}];
+        return;
+    end
+end
+if isfield(A,'sessionToAnimal') && istable(A.sessionToAnimal) && ~isempty(A.sessionToAnimal)
+    M = A.sessionToAnimal;
+    assert(all(ismember({'session','animalID'},M.Properties.VariableNames)), ...
+        'Animal map needs session and animalID variables.');
+    ms = normalizeTextColumn(M.session); ma = normalizeTextColumn(M.animalID);
+    assert(numel(unique(ms)) == numel(ms),'Duplicate session in animal-ID map.');
+    animalID = cell(height(T),1);
+    for i = 1:height(T)
+        hit = find(strcmp(ms,T.session{i}),1);
+        assert(~isempty(hit),'Session %s is absent from the animal-ID map.',T.session{i});
+        animalID{i} = ma{hit};
+    end
+    source = 'P.animalIdentity.sessionToAnimal';
+    return;
+end
+animalID = T.session;
+source = 'session/recording fallback';
+warning(['No explicit animal ID is present; recording ID is used as animal ID. ' ...
+    'If an animal has repeated recordings, fill P.animalIdentity.sessionToAnimal.']);
 end
 
 function T = emptyExclusionReport()
@@ -994,21 +1095,21 @@ for k = 1:numel(fieldNames)
 end
 end
 
-function validateFourModelOutputTable(T,filePath,P)
-% These fields distinguish the complete four-model output from earlier
+function validateThreeModelOutputTable(T,filePath,P)
+% Require the three fitted models and their matched CV outputs.
 % versions that computed AHV + forward + vigor only inside CV.
 required = { ...
     'phaseOnlyR2','phaseOnlyAIC','phaseOnlyBIC', ...
     'originalR2','originalAIC','originalBIC', ...
     'r2','AIC','BIC', ...
     'behaviorR2','behaviorAIC','behaviorBIC', ...
-    'behaviorB1','behaviorB2','behaviorBF','behaviorBV', ...
-    'cvR2Original','cvR2Full','cvR2PhaseOnly','cvR2Behavior', ...
-    'cvSSEOriginal','cvSSEFull','cvSSEPhaseOnly','cvSSEBehavior'};
+    'behaviorB1','behaviorB2', ...
+    'cvR2Original','cvR2PhaseOnly','cvR2Behavior', ...
+    'cvSSEOriginal','cvSSEPhaseOnly','cvSSEBehavior'};
 missing = setdiff(required,T.Properties.VariableNames);
 if ~isempty(missing)
     error(['The file %s is not a complete output of %s. Missing fields: %s. ' ...
-        'Re-run the four-model fitting script for this morph.'], ...
+        'Re-run the three-model fitting script for this morph.'], ...
         filePath,P.sourceFittingScript,strjoin(missing,', '));
 end
 end
@@ -1060,8 +1161,49 @@ end
 end
 
 function T = addDerivedNeuronVariables(T)
+% The current fitter has exactly three models (phase, AHV, phase + AHV).
+% Retain legacy report columns explicitly: with no forward/vigor terms,
+% all behavior is AHV and the effect of adding extra behavior is zero.
+if ~ismember('cvUniqueAllBehaviorBeyondPhase', T.Properties.VariableNames)
+    T.cvUniqueAllBehaviorBeyondPhase = T.cvUniqueAHVBeyondPhase;
+end
+if ~ismember('cvDeltaR2AllBehaviorBeyondPhase', T.Properties.VariableNames)
+    T.cvDeltaR2AllBehaviorBeyondPhase = T.cvDeltaR2AHVBeyondPhase;
+end
+if ~ismember('cvUniqueAddedBehavior', T.Properties.VariableNames)
+    T.cvUniqueAddedBehavior = zeros(height(T),1);
+end
+if ~ismember('cvDeltaR2AddedBehavior', T.Properties.VariableNames)
+    T.cvDeltaR2AddedBehavior = zeros(height(T),1);
+end
+if ~ismember('partialR2AllBehaviorBeyondPhase', T.Properties.VariableNames)
+    T.partialR2AllBehaviorBeyondPhase = T.partialR2AHVBeyondPhase;
+end
+if ~ismember('partialR2AddedBehavior', T.Properties.VariableNames)
+    T.partialR2AddedBehavior = zeros(height(T),1);
+end
+zeroColumns = {'bF','bV','bF_std','bV_std', ...
+    'deltaB0FromControls','deltaB1FromControls','deltaB2FromControls'};
+for iColumn = 1:numel(zeroColumns)
+    if ~ismember(zeroColumns{iColumn}, T.Properties.VariableNames)
+        T.(zeroColumns{iColumn}) = zeros(height(T),1);
+    end
+end
+nanColumns = {'vifForward','vifVigor'};
+for iColumn = 1:numel(nanColumns)
+    if ~ismember(nanColumns{iColumn}, T.Properties.VariableNames)
+        T.(nanColumns{iColumn}) = nan(height(T),1);
+    end
+end
+
+% Primary raw coefficients use the unstandardized phase + AHV fit.
+T.a_raw = T.originalA;
+T.d_raw = T.originalD;
+T.b0_raw = hypot(T.a_raw,T.d_raw);
+T.b1_raw = T.originalB1;
+T.b2_raw = T.originalB2;
 % These are deterministic re-expressions of already saved matched fits.
-required = {'b1','b2','originalB1','originalB2','phaseOnlyB0', ...
+required = {'b1','b2','b1_std','b2_std','originalB1','originalB2','phaseOnlyB0', ...
     'originalB0','b0','phaseOnlyPrefRad','prefRad','originalPrefRad', ...
     'cvR2PhaseOnly','cvR2Original','cvR2Behavior','cvR2Full', ...
     'cvUniqueAHVBeyondPhase','cvDeltaR2AHVBeyondPhase', ...
@@ -1073,6 +1215,11 @@ assert(isempty(missing),'Cannot derive comparison variables; missing: %s', ...
 T.gPositive = T.b1 + T.b2;
 T.gNegative = T.b1 - T.b2;
 T.directionalStrength = (abs(T.gPositive) + abs(T.gNegative)) ./ 2;
+T.overallRawAHVStrength = hypot(T.b1,T.b2);
+T.overallStandardizedAHVStrength = hypot(T.b1_std,T.b2_std);
+T.deltaR2Phase = T.cvR2Original - T.cvR2Behavior;
+T.deltaR2Behavior = T.cvR2Original - T.cvR2PhaseOnly;
+T.phaseDominanceR2 = T.cvR2PhaseOnly - T.cvR2Behavior;
 den = abs(T.gPositive) + abs(T.gNegative);
 T.directionalAsymmetry = (T.gPositive - T.gNegative) ./ den;
 T.directionalAsymmetry(~isfinite(T.directionalAsymmetry) | den <= eps) = NaN;
@@ -1120,14 +1267,16 @@ end
 
 morph = cell(nRows,1);
 session = cell(nRows,1);
+animalID = cell(nRows,1);
+recordingID = cell(nRows,1);
 fishKey = cell(nRows,1);
 classLabel = cell(nRows,1);
 nNeuronsAvailable = zeros(nRows,1);
 nNeuronsQuality = zeros(nRows,1);
 
-Fish = table(morph, session, fishKey, classLabel, ...
+Fish = table(morph, session, animalID, recordingID, fishKey, classLabel, ...
     nNeuronsAvailable, nNeuronsQuality, ...
-    'VariableNames', {'morph','session','fishKey','class', ...
+    'VariableNames', {'morph','session','animalID','recordingID','fishKey','class', ...
     'nNeuronsAvailable','nNeuronsQuality'});
 for k = 1:numel(Metrics)
     Fish.(Metrics(k).name) = nan(nRows,1);
@@ -1153,6 +1302,8 @@ for f = 1:numel(fishKeys)
         first = find(idxFish, 1, 'first');
         Fish.morph{row} = All.morph{first};
         Fish.session{row} = All.session{first};
+        Fish.animalID{row} = All.animalID{first};
+        Fish.recordingID{row} = strjoin(unique(All.recordingID(idxFish),'stable'),';');
         Fish.fishKey{row} = All.fishKey{first};
         Fish.class{row} = levels{c};
         Fish.nNeuronsAvailable(row) = sum(idx);
@@ -1186,8 +1337,9 @@ valid = rowMask(:) & isfinite(raw);
 cvSources = {'cvR2PhaseOnly','cvR2Original','cvR2Behavior','cvR2Full', ...
     'cvUniquePhase','cvDeltaR2Phase','cvUniqueAddedBehavior', ...
     'cvDeltaR2AddedBehavior','cvUniqueAHVBeyondPhase', ...
-    'cvDeltaR2AHVBeyondPhase','cvUniqueAllBehaviorBeyondPhase', ...
-    'cvDeltaR2AllBehaviorBeyondPhase','originalBetterPhaseOnly', ...
+    'cvDeltaR2AHVBeyondPhase','cvUniqueAllBehaviorBeyondPhase','phaseDominanceR2', ...
+    'cvDeltaR2AllBehaviorBeyondPhase','deltaR2Phase','deltaR2Behavior', ...
+    'originalBetterPhaseOnly', ...
     'fullBetterPhaseOnly','fullBetterOriginal','fullBetterBehavior', ...
     'behaviorBetterOriginal'};
 if ismember(M.source,cvSources) && ismember('cvQuartetOK',T.Properties.VariableNames)
@@ -1274,12 +1426,8 @@ for k = 1:numel(Metrics)
     nMolino(k) = counts(strcmp(P.morphOrder, 'Molino'));
     nPachon(k) = counts(strcmp(P.morphOrder, 'Pachon'));
 
-    if numel(unique(g)) == numel(P.morphOrder) && ...
-            all(counts >= P.stats.minFishPerMorph)
-        [pRaw(k), tbl] = kruskalwallis(x, g, 'off');
-        H(k) = extractKWChiSquare(tbl);
-        df(k) = numel(P.morphOrder) - 1;
-    end
+    % Deliberately no three-group omnibus test: it would include the
+    % Molino-Pachon separation, which is outside the requested contrasts.
 end
 
 pAdjusted = pRaw;
@@ -1304,6 +1452,7 @@ ciHigh = nan(nRows,1);
 cliffsDelta_BvsA = nan(nRows,1);
 pRaw = nan(nRows,1);
 pAdjusted = nan(nRows,1);
+test = repmat({'two-group Kruskal-Wallis'},nRows,1);
 
 row = 0;
 for k = 1:numel(Metrics)
@@ -1335,7 +1484,8 @@ for k = 1:numel(Metrics)
             ciLow(row) = ci(1);
             ciHigh(row) = ci(2);
             cliffsDelta_BvsA(row) = cliffsDelta(xb, xa);
-            pRaw(row) = ranksum(xa, xb);
+            kwGroup = [repmat({A},nA(row),1); repmat({B},nB(row),1)];
+            pRaw(row) = kruskalwallis([xa; xb],kwGroup,'off');
         end
     end
 
@@ -1343,21 +1493,20 @@ for k = 1:numel(Metrics)
 end
 
 correctionFamily = repmat({''},nRows,1);
-Pairwise = table(metric, metricLabel, analysisScope, groupA, groupB, ...
+Pairwise = table(metric, metricLabel, analysisScope, test, groupA, groupB, ...
     nA, nB, medianA, medianB, medianDifference_BminusA, ciLow, ciHigh, ...
     cliffsDelta_BvsA, pRaw, pAdjusted, correctionFamily);
 end
 
 function [Omnibus,Pairwise] = applyConfiguredCorrections( ...
         Omnibus,Pairwise,Families,P)
-% Each outcome contains two planned cavefish-versus-Surface contrasts.
+% Each outcome contains the three planned pairwise morph contrasts.
 % The default method is 'none', so they remain uncorrected. If 'bh' is
 % requested as a sensitivity analysis, it is applied within one metric and
 % analysis scope; biologically different outcomes are never pooled.
 %
-% Omnibus Kruskal-Wallis p-values are left raw by default because there is one
-% three-group omnibus test per outcome. Cross-metric omnibus correction can be
-% enabled explicitly with P.stats.correctOmnibusAcrossMetrics.
+% The legacy Omnibus table is retained for compatibility but its p-values are
+% NaN because three-group tests are intentionally disabled.
 if ~isstruct(Families); error('Families must be a struct array.'); end
 scopes = unique(Omnibus.analysisScope,'stable');
 for s = 1:numel(scopes)
@@ -1365,18 +1514,11 @@ for s = 1:numel(scopes)
         idxO = strcmp(Omnibus.analysisScope,scopes{s}) & ...
             ismember(Omnibus.metric,Families(f).metrics);
 
-        if P.stats.correctOmnibusAcrossMetrics
-            Omnibus.pAdjusted(idxO) = adjustPValues( ...
-                Omnibus.pRaw(idxO),P.stats.multipleComparisonMethod);
-            Omnibus.correctionFamily(idxO) = ...
-                repmat({[Families(f).name '_omnibus']},sum(idxO),1);
-        else
-            Omnibus.pAdjusted(idxO) = Omnibus.pRaw(idxO);
-            Omnibus.correctionFamily(idxO) = ...
-                repmat({'single_outcome_omnibus'},sum(idxO),1);
-        end
+        Omnibus.pAdjusted(idxO) = NaN;
+        Omnibus.correctionFamily(idxO) = ...
+            repmat({'disabled_three_group_test'},sum(idxO),1);
 
-        % Apply the configured method to the two planned comparisons for
+        % Apply the configured method to the three planned comparisons for
         % this metric. With the default 'none', pAdjusted equals pRaw.
         familyMetrics = Families(f).metrics;
         for k = 1:numel(familyMetrics)
@@ -1588,253 +1730,346 @@ qs = min(qs,1);
 q(valid(order)) = qs;
 end
 
-function [FishROC,columns] = computeFishROCFromOOFTraces(All,P)
-% Compute neuron-level ROC curves from truly held-out prediction traces,
-% summarize neurons within fish, then retain fish as the inferential unit.
-FishROC = table();
-columns = struct('observed','','phaseOnly','','original','','behavior','','full','');
-columns.observed = firstExistingVariable(All,P.roc.observedVariableCandidates);
-columns.phaseOnly = firstExistingVariable( ...
-    All,P.roc.phaseOnlyPredictionCandidates);
-columns.original = firstExistingVariable(All,P.roc.originalPredictionCandidates);
-columns.behavior = firstExistingVariable(All,P.roc.behaviorPredictionCandidates);
-columns.full = firstExistingVariable(All,P.roc.fullPredictionCandidates);
-if any(cellfun(@isempty,struct2cell(columns)))
-    return;
+function Stats = runPositiveB1Tests(Fish,P)
+morph=string(P.morphOrder(:)); nFish=zeros(numel(morph),1); medianB1=nan(numel(morph),1); ciLow=nan(numel(morph),1); ciHigh=nan(numel(morph),1); pGreaterThanZero=nan(numel(morph),1);
+for m=1:numel(morph)
+ x=Fish.median_b1_raw(strcmp(Fish.morph,morph(m))); x=x(isfinite(x)); nFish(m)=numel(x);
+ if isempty(x), continue; end
+ medianB1(m)=median(x); [~,ci]=bootstrapMedianCI(x,P.stats.nBootstrap,P.stats.bootstrapCI); ciLow(m)=ci(1); ciHigh(m)=ci(2);
+ if numel(x)>=P.stats.minFishPerMorph, pGreaterThanZero(m)=signrank(x,0,"tail","right"); end
+end
+Stats=table(morph,nFish,medianB1,ciLow,ciHigh,pGreaterThanZero);
 end
 
-fish = unique(All.fishKey,'stable');
-morph = cell(numel(fish),1); session = cell(numel(fish),1);
-fishKey = fish(:); nNeuronsROC = zeros(numel(fish),1);
-aucPhaseOnly = nan(numel(fish),1); aucOriginal = nan(numel(fish),1);
-aucBehavior = nan(numel(fish),1); aucFull = nan(numel(fish),1);
-fprGrid = cell(numel(fish),1); tprPhaseOnly = cell(numel(fish),1);
-tprOriginal = cell(numel(fish),1); tprBehavior = cell(numel(fish),1);
-tprFull = cell(numel(fish),1);
+function [Examples,FishAHV,AHVSamples] = buildRepresentativeExamplesAndAHVSummary(All,P)
+SData=struct("morph",{},"session",{},"time",{},"phase",{},"ahv",{},"candidatePath",{},"rawMapping",{});
+for m=1:numel(P.inputs)
+ filePath=locateResultsFile(P.inputs(m).folder,P.inputs(m).fileName); L=load(filePath,"Results"); if ~isfield(L,"Results"), continue; end
+ R=L.Results; if isstruct(R), R=arrayfun(@(x){x},R); end
+ for r=1:numel(R)
+  Q=R{r}; if ~isstruct(Q)||~isfield(Q,"name")||~isfield(Q,"tCa")||~isfield(Q,"phaseCa")||~isfield(Q,"ahvCa"), continue; end
+  mapping=struct(); if isfield(Q,"candidateDiagnostics")&&isfield(Q.candidateDiagnostics,"rawTraceMapping"), mapping=Q.candidateDiagnostics.rawTraceMapping; end; SData(end+1)=struct("morph",string(P.inputs(m).morph),"session",string(Q.name),"time",double(Q.tCa(:)),"phase",double(Q.phaseCa(:)),"ahv",double(Q.ahvCa(:)),"candidatePath",string(Q.paths.candidatePath),"rawMapping",mapping); %#ok<AGROW>
+ end
+end
+Examples=struct("morph",{},"session",{},"animalID",{},"neuronID",{},"cvR2",{},"phaseDominance",{},"windowStartSeconds",{},"time",{},"observed",{},"prediction",{},"phaseTerm",{},"ahvTerm",{},"absAHVTerm",{});
+for m=1:numel(P.morphOrder)
+ rows=find(strcmp(All.morph,P.morphOrder{m})&All.baseQualityOK&isfinite(All.cvR2Original)&isfinite(All.phaseDominanceR2)); if isempty(rows), continue; end
+ [~,o1]=sort(All.cvR2Original(rows)); rankR2=zeros(numel(rows),1); rankR2(o1)=(1:numel(rows))/numel(rows);
+ [~,o2]=sort(All.phaseDominanceR2(rows)); rankDom=zeros(numel(rows),1); rankDom(o2)=(1:numel(rows))/numel(rows); score=(rankR2+rankDom)/2;
+ targetScores=quantile(score,P.examples.scoreQuantiles); available=true(numel(rows),1); order=zeros(0,1);
+ for q=1:numel(targetScores), candidate=find(available); if isempty(candidate), break; end; [~,nearest]=min(abs(score(candidate)-targetScores(q))); chosen=candidate(nearest); order(end+1,1)=chosen; available(chosen)=false; end
+ [~,fallbackOrder]=sort(score,"descend"); order=[order;fallbackOrder(available(fallbackOrder))];
+ nChosen=0;
+ for j=transpose(order)
+  row=rows(j); dataIndex=find([SData.morph]==string(P.morphOrder{m})&[SData.session]==string(All.session(row)),1); if isempty(dataIndex), continue; end
+  observed=traceCellValue(All.cvObserved,row); prediction=traceCellValue(All.cvPredFull,row); n=min([numel(observed),numel(prediction),numel(SData(dataIndex).time),numel(SData(dataIndex).phase),numel(SData(dataIndex).ahv)]); if n<2, continue; end
+  D=SData(dataIndex); responseOK=responseFiniteMask(D,All.neuronID(row)); time=D.time(responseOK); phase=D.phase(responseOK); ahv=D.ahv(responseOK); n=min([numel(observed),numel(prediction),numel(time),numel(phase),numel(ahv)]); assert(n==numel(observed)&&n==numel(time),"OOF trace and finite-response regressor lengths do not match for %s.",D.session); time=time(1:n); phase=phase(1:n); ahv=ahv(1:n); observed=observed(1:n); prediction=prediction(1:n);
+  phaseTerm=All.originalA(row).*cos(All.originalPrefRad(row)-phase); ahvTerm=All.originalB2(row).*ahv; absAHVTerm=All.originalB1(row).*abs(ahv);
+  window=selectRepresentativeWindow(time,observed,prediction,phaseTerm,ahvTerm,absAHVTerm,P.examples.windowSeconds,nChosen+1); if ~any(window), continue; end
+  nChosen=nChosen+1; windowStart=time(find(window,1))-time(1); Examples(end+1)=struct("morph",string(P.morphOrder{m}),"session",string(All.session(row)),"animalID",string(All.animalID(row)),"neuronID",All.neuronID(row),"cvR2",All.cvR2Original(row),"phaseDominance",All.phaseDominanceR2(row),"windowStartSeconds",windowStart,"time",time(window),"observed",observed(window),"prediction",prediction(window),"phaseTerm",phaseTerm(window),"ahvTerm",ahvTerm(window),"absAHVTerm",absAHVTerm(window)); %#ok<AGROW>
+  if nChosen>=P.examples.numberPerMorph, break; end
+ end
+end
+fishKeys=unique(string(All.fishKey),"stable"); morph=strings(numel(fishKeys),1); animalID=strings(numel(fishKeys),1); meanAbsAHV=nan(numel(fishKeys),1); sdSignedAHV=nan(numel(fishKeys),1); nSamples=zeros(numel(fishKeys),1);
+AHVSamples=struct("morph",cell(numel(fishKeys),1),"fishKey",cell(numel(fishKeys),1),"values",cell(numel(fishKeys),1));
+for f=1:numel(fishKeys)
+ q=string(All.fishKey)==fishKeys(f); first=find(q,1); morph(f)=string(All.morph(first)); animalID(f)=string(All.animalID(first)); sessions=unique(string(All.session(q))); x=[];
+ for s=1:numel(sessions), k=find([SData.morph]==morph(f)&[SData.session]==sessions(s),1); if ~isempty(k), x=[x;SData(k).ahv(isfinite(SData(k).ahv))]; end; end %#ok<AGROW>
+ nSamples(f)=numel(x); if ~isempty(x), meanAbsAHV(f)=mean(abs(x)); sdSignedAHV(f)=std(x,0); end
+ AHVSamples(f).morph=morph(f); AHVSamples(f).fishKey=fishKeys(f); AHVSamples(f).values=x;
+end
+FishAHV=table(morph,animalID,fishKeys,meanAbsAHV,sdSignedAHV,nSamples);
+end
 
-for f = 1:numel(fish)
-    rows = find(strcmp(All.fishKey,fish{f}) & All.baseQualityOK);
-    first = find(strcmp(All.fishKey,fish{f}),1,'first');
-    morph{f} = All.morph{first}; session{f} = All.session{first};
-    curvesP = []; curvesO = []; curvesB = []; curvesF = [];
-    aucP = []; aucO = []; aucB = []; aucF = [];
-    for r = rows(:)'
-        y = getTraceEntry(All,columns.observed,r);
-        pP = getTraceEntry(All,columns.phaseOnly,r);
-        pO = getTraceEntry(All,columns.original,r);
-        pB = getTraceEntry(All,columns.behavior,r);
-        pF = getTraceEntry(All,columns.full,r);
-        lengths = [numel(y),numel(pP),numel(pO),numel(pB),numel(pF)];
-        if any(lengths < 2) || numel(unique(lengths)) ~= 1; continue; end
-        valid = isfinite(y) & isfinite(pP) & isfinite(pO) & ...
-            isfinite(pB) & isfinite(pF);
-        y = y(valid); pP = pP(valid); pO = pO(valid);
-        pB = pB(valid); pF = pF(valid);
-        label = y > P.roc.activityThresholdZ;
-        if sum(label) < P.roc.minPositiveFrames || ...
-                sum(~label) < P.roc.minNegativeFrames
-            continue;
-        end
-        [curveP,aP] = binaryROCAtGrid(label,pP,P.roc.fprGrid);
-        [curveO,aO] = binaryROCAtGrid(label,pO,P.roc.fprGrid);
-        [curveB,aB] = binaryROCAtGrid(label,pB,P.roc.fprGrid);
-        [curveF,aF] = binaryROCAtGrid(label,pF,P.roc.fprGrid);
-        curvesP(end+1,:) = curveP; %#ok<AGROW>
-        curvesO(end+1,:) = curveO; %#ok<AGROW>
-        curvesB(end+1,:) = curveB; %#ok<AGROW>
-        curvesF(end+1,:) = curveF; %#ok<AGROW>
-        aucP(end+1,1) = aP; %#ok<AGROW>
-        aucO(end+1,1) = aO; %#ok<AGROW>
-        aucB(end+1,1) = aB; %#ok<AGROW>
-        aucF(end+1,1) = aF; %#ok<AGROW>
+function window = selectRepresentativeWindow(time,varargin)
+windowSeconds=varargin{end-1}; windowRank=varargin{end}; signals=varargin(1:end-2);
+window=false(size(time)); finiteTime=find(isfinite(time)); if isempty(finiteTime), return; end
+starts=time(finiteTime(1)):windowSeconds:time(finiteTime(end)); scores=nan(size(starts)); masks=cell(size(starts));
+for k=1:numel(starts)
+ masks{k}=time>=starts(k)&time<starts(k)+windowSeconds;
+ if nnz(masks{k})<2, continue; end
+ z=0; for s=1:numel(signals), v=signals{s}(masks{k}); v=v(isfinite(v)); if ~isempty(v), z=z+std(v,0); end; end; scores(k)=z;
+end
+[~,order]=sort(scores,"descend","MissingPlacement","last"); order=order(isfinite(scores(order))); if isempty(order), return; end
+window=masks{order(1+mod(windowRank-1,min(3,numel(order))))};
+end
+
+function ok = responseFiniteMask(D,neuronID)
+C=load(D.candidatePath,"calcium_traces","candidate_cell_ids","time_s"); ids=double(C.candidate_cell_ids(:)); candidatePosition=find(ids==double(neuronID),1); assert(~isempty(candidatePosition),"Representative neuron ID is absent from its candidate file.");
+if ~isempty(fieldnames(D.rawMapping))
+    M=D.rawMapping; originalID=M.originalRoiIds(candidatePosition); R=load(M.rasterFile,"deltaFoF"); Y=double(R.deltaFoF);
+    if size(Y,2)>=originalID, y=Y(M.rawFrameStart:M.rawFrameEnd,originalID); elseif size(Y,1)>=originalID, y=transpose(Y(originalID,M.rawFrameStart:M.rawFrameEnd)); else, error("RASTER dimensions do not contain mapped ROI."); end
+else
+    Y=double(C.calcium_traces); if size(Y,2)==numel(ids), y=Y(:,candidatePosition); elseif size(Y,1)==numel(ids), y=transpose(Y(candidatePosition,:)); else, error("Candidate trace dimensions do not match IDs."); end
+end
+[found,location]=ismember(D.time,double(C.time_s(:))); assert(all(found),"Saved fit times do not map exactly to candidate times."); ok=isfinite(y(location));
+end
+
+function x = traceCellValue(column,row)
+if iscell(column), x=double(column{row}(:)); else, x=double(column(row,:)); x=x(:); end
+end
+
+function Stats = runAHVRegressorStats(T,Samples,P)
+metrics = ["meanAbsAHV";"sdSignedAHV"];
+metricLabels = ["Mean |AHV| per fish";"SD of signed AHV per fish"];
+distributionComparisons = {"Surface","Molino";"Surface","Pachon"};
+metricOut=strings(0,1); metricLabel=strings(0,1); test=strings(0,1);
+groupA=strings(0,1); groupB=strings(0,1); nA=zeros(0,1); nB=zeros(0,1);
+statistic=nan(0,1); omnibusP=nan(0,1); pRaw=nan(0,1); pAdjusted=nan(0,1);
+for k=1:numel(metrics)
+    values=[]; groups=strings(0,1); counts=zeros(numel(P.morphOrder),1);
+    for m=1:numel(P.morphOrder)
+        x=T.(metrics(k))(T.morph==string(P.morphOrder{m})); x=x(isfinite(x));
+        counts(m)=numel(x); values=[values;x]; %#ok<AGROW>
+        groups=[groups;repmat(string(P.morphOrder{m}),numel(x),1)]; %#ok<AGROW>
     end
-    nNeuronsROC(f) = size(curvesP,1);
-    if nNeuronsROC(f) >= P.roc.minNeuronsPerFish
-        fprGrid{f} = P.roc.fprGrid(:)';
-        tprPhaseOnly{f} = median(curvesP,1,'omitnan');
-        tprOriginal{f} = median(curvesO,1,'omitnan');
-        tprBehavior{f} = median(curvesB,1,'omitnan');
-        tprFull{f} = median(curvesF,1,'omitnan');
-        aucPhaseOnly(f) = median(aucP,'omitnan');
-        aucOriginal(f) = median(aucO,'omitnan');
-        aucBehavior(f) = median(aucB,'omitnan');
-        aucFull(f) = median(aucF,'omitnan');
-    end
-end
-
-FishROC = table(morph,session,fishKey,nNeuronsROC,aucPhaseOnly,aucOriginal, ...
-    aucBehavior,aucFull,fprGrid,tprPhaseOnly,tprOriginal,tprBehavior,tprFull);
-keep = isfinite(FishROC.aucPhaseOnly) & isfinite(FishROC.aucOriginal) & ...
-    isfinite(FishROC.aucBehavior) & isfinite(FishROC.aucFull);
-FishROC = FishROC(keep,:);
-end
-
-function name = firstExistingVariable(T,candidates)
-name = '';
-variables = T.Properties.VariableNames;
-for k = 1:numel(candidates)
-    idx = find(strcmpi(variables,candidates{k}),1);
-    if ~isempty(idx)
-        name = variables{idx};
-        return;
-    end
-end
-end
-
-function x = getTraceEntry(T,varName,row)
-v = T.(varName);
-x = [];
-if iscell(v)
-    x = v{row};
-elseif isnumeric(v) || islogical(v)
-    if ismatrix(v) && size(v,1) == height(T) && size(v,2) > 1
-        x = v(row,:);
-    end
-end
-if ~(isnumeric(x) || islogical(x)); x = []; return; end
-x = double(x(:));
-end
-
-function [tprGrid,auc] = binaryROCAtGrid(label,score,fprGrid)
-% ROC points respect tied prediction scores; AUC uses average ranks.
-label = logical(label(:)); score = double(score(:));
-[sortedScore,order] = sort(score,'descend');
-sortedLabel = label(order); nPos = sum(label); nNeg = sum(~label);
-lastInTie = [find(diff(sortedScore) ~= 0); numel(sortedScore)];
-tp = cumsum(sortedLabel); fp = cumsum(~sortedLabel);
-fpr = [0; fp(lastInTie)./nNeg; 1];
-tpr = [0; tp(lastInTie)./nPos; 1];
-[fprUnique,~,group] = unique(fpr);
-tprUnique = accumarray(group,tpr,[],@max);
-tprUnique = cummax(tprUnique);
-tprGrid = interp1(fprUnique,tprUnique,fprGrid,'previous','extrap');
-tprGrid = min(max(tprGrid,0),1);
-
-% Mann-Whitney interpretation of AUC with half credit for ties.
-[ascending,ordAsc] = sort(score,'ascend');
-ranks = zeros(size(score)); i = 1;
-while i <= numel(score)
-    j = i;
-    while j < numel(score) && ascending(j+1) == ascending(i); j = j+1; end
-    ranks(ordAsc(i:j)) = mean(i:j);
-    i = j+1;
-end
-auc = (sum(ranks(label)) - nPos*(nPos+1)/2) ./ (nPos*nNeg);
-end
-
-function [PairStats,FriedmanStats] = runROCModelStats(FishROC,P)
-n = P.modelNames;
-comparisons = { ...
-    'aucOriginal','aucFull',n{1},n{2}; ...
-    'aucOriginal','aucPhaseOnly',n{1},n{3}; ...
-    'aucOriginal','aucBehavior',n{1},n{4}; ...
-    'aucFull','aucPhaseOnly',n{2},n{3}; ...
-    'aucFull','aucBehavior',n{2},n{4}; ...
-    'aucPhaseOnly','aucBehavior',n{3},n{4}};
-PairStats = runWithinMorphPairedStats(FishROC,comparisons,P);
-scopes = [P.morphOrder,{'AllMorphs'}];
-scope = scopes(:); nFish = zeros(numel(scopes),1);
-chiSquare = nan(numel(scopes),1); pRaw = nan(numel(scopes),1);
-kendallW = nan(numel(scopes),1);
-for s = 1:numel(scopes)
-    if strcmp(scopes{s},'AllMorphs')
-        idx = true(height(FishROC),1);
-    else
-        idx = strcmp(FishROC.morph,scopes{s});
-    end
-    X = [FishROC.aucOriginal,FishROC.aucFull, ...
-        FishROC.aucPhaseOnly,FishROC.aucBehavior];
-    X = X(idx,:); X = X(all(isfinite(X),2),:); nFish(s) = size(X,1);
-    if size(X,1) >= P.stats.minFishPerMorph
-        [pRaw(s),tbl] = friedman(X,1,'off');
-        chiSquare(s) = extractFriedmanChiSquare(tbl);
-        if isfinite(chiSquare(s))
-            kendallW(s) = chiSquare(s)/(size(X,1)*(size(X,2)-1));
+    if all(counts>=P.stats.minFishPerMorph)
+        [pKW,~,kwStats]=kruskalwallis(values,groups,"off");
+        [posthoc,~,~,groupNames]=multcompare(kwStats, ...
+            "CType","dunn-sidak","Display","off");
+        for j=1:size(posthoc,1)
+            ia=posthoc(j,1); ib=posthoc(j,2);
+            metricOut(end+1,1)=metrics(k); metricLabel(end+1,1)=metricLabels(k); %#ok<AGROW>
+            test(end+1,1)="Dunn-Sidak post hoc after one-way Kruskal-Wallis"; %#ok<AGROW>
+            groupA(end+1,1)=string(groupNames{ia}); groupB(end+1,1)=string(groupNames{ib}); %#ok<AGROW>
+            nA(end+1,1)=counts(strcmp(P.morphOrder,groupNames{ia})); %#ok<AGROW>
+            nB(end+1,1)=counts(strcmp(P.morphOrder,groupNames{ib})); %#ok<AGROW>
+            statistic(end+1,1)=posthoc(j,4); omnibusP(end+1,1)=pKW; %#ok<AGROW>
+            pRaw(end+1,1)=NaN; pAdjusted(end+1,1)=posthoc(j,6); %#ok<AGROW>
         end
     end
 end
-pAdjusted = pRaw;
-FriedmanStats = table(scope,nFish,chiSquare,pRaw,pAdjusted,kendallW);
+[D,~,~]=normalizedFishAHVDensities(Samples,P);
+for j=1:size(distributionComparisons,1)
+    a=distributionComparisons{j,1}; b=distributionComparisons{j,2};
+    ia=find([Samples.morph]==a); ib=find([Samples.morph]==b);
+    ia=ia(all(isfinite(D(ia,:)),2)); ib=ib(all(isfinite(D(ib,:)),2));
+    [distance,pv]=fishLabelPermutationCDFTest(D(ia,:),D(ib,:), ...
+        P.ahvDistribution.nPermutations);
+    metricOut(end+1,1)="signedAHVDistribution"; %#ok<AGROW>
+    metricLabel(end+1,1)="Equal-fish-weight signed-AHV distribution"; %#ok<AGROW>
+    test(end+1,1)="fish-label permutation of mean-CDF sup distance"; %#ok<AGROW>
+    groupA(end+1,1)=a; groupB(end+1,1)=b; nA(end+1,1)=numel(ia); nB(end+1,1)=numel(ib); %#ok<AGROW>
+    statistic(end+1,1)=distance; omnibusP(end+1,1)=NaN; %#ok<AGROW>
+    pRaw(end+1,1)=pv; pAdjusted(end+1,1)=pv; %#ok<AGROW>
+end
+groupA=cellstr(groupA); groupB=cellstr(groupB);
+Stats=table(metricOut,metricLabel,test,groupA,groupB,nA,nB,statistic,omnibusP,pRaw,pAdjusted);
 end
 
-function plotModelROC(FishROC,FriedmanStats,P,outputDir,baseName)
-scopes = [{'AllMorphs'},P.morphOrder];
-scopeLabels = [{'All fish'},P.morphOrder];
-modelVars = {'tprOriginal','tprFull','tprPhaseOnly','tprBehavior'};
-aucVars = {'aucOriginal','aucFull','aucPhaseOnly','aucBehavior'};
-modelNames = P.modelNames;
-colors = [0.42 0.42 0.42; 0.48 0.22 0.68; ...
-    0.10 0.62 0.56; 0.20 0.52 0.82];
-fig = figure('Visible',P.figure.visible,'Color','w', ...
-    'Position',[50 50 920 760]);
-tl = tiledlayout(fig,2,2,'TileSpacing','compact','Padding','compact');
-for s = 1:numel(scopes)
-    ax = nexttile(tl); hold(ax,'on');
-    if strcmp(scopes{s},'AllMorphs')
-        idx = true(height(FishROC),1);
-    else
-        idx = strcmp(FishROC.morph,scopes{s});
-    end
-    plot(ax,[0 1],[0 1],':','Color',[0.58 0.58 0.58], ...
-        'LineWidth',1.1,'HandleVisibility','off');
-    legendText = cell(1,numel(modelVars));
-    for j = 1:numel(modelVars)
-        traceCells = FishROC.(modelVars{j})(idx);
-        C = vertcat(traceCells{:});
-        if isempty(C); continue; end
-        curve = median(C,1,'omitnan');
-        lo = prctile(C,25,1); hi = prctile(C,75,1);
-        x = P.roc.fprGrid(:)';
-        patch(ax,[x fliplr(x)],[lo fliplr(hi)],colors(j,:), ...
-            'FaceAlpha',0.10,'EdgeColor','none','HandleVisibility','off');
-        plot(ax,x,curve,'Color',colors(j,:),'LineWidth',2.3, ...
-            'DisplayName',modelNames{j});
-        auc = FishROC.(aucVars{j})(idx);
-        [med,ci] = bootstrapMedianCI(auc,P.stats.nBootstrap,P.stats.bootstrapCI);
-        legendText{j} = sprintf('%s: AUC %.3f [%.3f, %.3f]', ...
-            modelNames{j},med,ci(1),ci(2));
-    end
-    axis(ax,'square'); xlim(ax,[0 1]); ylim(ax,[0 1]); grid(ax,'on');
-    set(ax,'TickDir','out','Box','off');
-    xlabel(ax,'False-positive rate'); ylabel(ax,'True-positive rate');
-    row = FriedmanStats(strcmp(FriedmanStats.scope,scopes{s}),:);
-    if isempty(row); p = NaN; else; p = row.pAdjusted(1); end
-    title(ax,sprintf('%s | paired model p=%s',scopeLabels{s},formatP(p)), ...
-        'FontWeight','normal');
-    legend(ax,legendText,'Location','southeast','FontSize',8);
+function [D,centers,edges] = normalizedFishAHVDensities(Samples,P)
+allQuantiles=nan(numel(Samples),2);
+for f=1:numel(Samples)
+    x=Samples(f).values; x=x(isfinite(x));
+    if ~isempty(x), allQuantiles(f,:)=prctile(x,P.ahvDistribution.tailPercentiles); end
 end
-title(tl,sprintf(['Held-out activity-state ROC | positive: observed z-score > %.2f' ...
-    '\nCurves and AUC give equal weight to each fish'],P.roc.activityThresholdZ), ...
-    'FontWeight','bold');
+lo=min(allQuantiles(:,1),[],"omitnan"); hi=max(allQuantiles(:,2),[],"omitnan");
+limit=max(abs([lo hi]));
+if ~isfinite(limit)||limit<=0, limit=1; end
+edges=linspace(-limit,limit,P.ahvDistribution.nBins+1);
+centers=(edges(1:end-1)+edges(2:end))/2;
+D=nan(numel(Samples),P.ahvDistribution.nBins);
+for f=1:numel(Samples)
+    x=Samples(f).values; x=x(isfinite(x)); counts=histcounts(x,edges);
+    if sum(counts)>0, D(f,:)=counts./sum(counts)./diff(edges); end
+end
+end
+
+function [observed,p] = fishLabelPermutationCDFTest(A,B,nPermutations)
+if isempty(A)||isempty(B), observed=NaN; p=NaN; return; end
+cdfA=cumsum(A./sum(A,2),2); cdfB=cumsum(B./sum(B,2),2);
+observed=max(abs(mean(cdfA,1)-mean(cdfB,1)));
+pooled=[cdfA;cdfB]; nA=size(A,1); n=size(pooled,1); exceed=0;
+for r=1:nPermutations
+    order=randperm(n); delta=max(abs(mean(pooled(order(1:nA),:),1)- ...
+        mean(pooled(order(nA+1:end),:),1)));
+    exceed=exceed+(delta>=observed);
+end
+p=(exceed+1)/(nPermutations+1);
+end
+
+function plotRepresentativeExamples(E,P,outputDir,baseName)
+if isempty(E), warning("No compatible OOF traces were available for representative examples."); return; end
+rowFields=["observed","phaseTerm","ahvTerm","absAHVTerm"]; rowLabels=["Activity / OOF prediction","Phase term","AHV term","|AHV| term"];
+for exampleNumber=1:P.examples.numberPerMorph
+ fig=figure("Visible",P.figure.visible,"Color","w","Position",[30 30 1450 620]);
+ for m=1:3
+  morphExamples=find([E.morph]==string(P.morphOrder{m})); e=[]; if numel(morphExamples)>=exampleNumber, e=morphExamples(exampleNumber); end
+  for r=1:4
+   ax=subplot(4,3,(r-1)*3+m,"Parent",fig); hold(ax,"on"); if isempty(e), title(ax,P.morphOrder{m}+" (no compatible example "+exampleNumber+")"); continue; end
+   keep=1:max(1,ceil(numel(E(e).time)/1500)):numel(E(e).time); t=(E(e).time(keep)-E(e).time(1))/60;
+   if r==1
+    plot(ax,t,E(e).observed(keep),"Color",[.25 .25 .25],"LineWidth",.8,"DisplayName","Observed"); plot(ax,t,E(e).prediction(keep),"Color",P.morphColors(m,:),"LineWidth",1.4,"DisplayName","OOF full prediction");
+    title(ax,sprintf("%s | %s | neuron %g | start %.1f min | CV R2 %.3f | dominance %.3f",P.morphOrder{m},E(e).session,E(e).neuronID,E(e).windowStartSeconds/60,E(e).cvR2,E(e).phaseDominance),"Interpreter","none");
+   else
+    values=E(e).(rowFields(r)); plot(ax,t,values(keep),"Color",P.morphColors(m,:),"LineWidth",1);
+   end
+   if m==1, ylabel(ax,rowLabels(r)); end; if r==4, xlabel(ax,"Time (min)"); else, set(ax,"XTickLabel",[]); end; grid(ax,"on"); box(ax,"off");
+  end
+ end
+ assert(isgraphics(fig,"figure"),"Representative figure was unexpectedly closed before export."); drawnow; assert(isgraphics(fig,"figure"),"Representative figure closed during drawnow."); saveRepresentativeFigure(fig,outputDir,sprintf('%s_%d',baseName,exampleNumber),P);
+end
+end
+
+function saveRepresentativeFigure(fig,outputDir,baseName,P)
+if P.figure.savePNG
+ print(fig,fullfile(outputDir,[baseName '.png']),'-dpng',sprintf('-r%d',P.figure.dpi));
+ print(fig,fullfile(outputDir,[baseName '.svg']),'-dsvg');
+end
+if strcmpi(P.figure.visible,"off"), close(fig); end
+end
+
+function plotAHVRegressorDistributions(T,Samples,Stats,P,outputDir,baseName)
+fig=figure("Visible",P.figure.visible,"Color","w", ...
+    "Position",[60 60 1080 400],"Renderer","painters");
+tl=tiledlayout(fig,1,3,"TileSpacing","compact","Padding","compact");
+vars=["meanAbsAHV","sdSignedAHV"];
+labels=["Mean |AHV| per fish","SD of signed AHV per fish"];
+for k=1:numel(vars)
+    ax=nexttile(tl); hold(ax,"on"); tickLabels=cell(size(P.morphOrder));
+    for m=1:numel(P.morphOrder)
+        y=T.(vars(k))(T.morph==string(P.morphOrder{m})); y=y(isfinite(y));
+        tickLabels{m}=sprintf("%s (n=%d fish)",P.morphOrder{m},numel(y));
+        if isempty(y), continue; end
+        [med,ci]=bootstrapMedianCI(y,P.stats.nBootstrap,P.stats.bootstrapCI);
+        bar(ax,m,med,P.figure.morphBarWidth,"FaceColor",P.morphColors(m,:), ...
+            "FaceAlpha",.78,"EdgeColor","k","LineWidth",.8,"HandleVisibility","off");
+        errorbar(ax,m,med,med-ci(1),ci(2)-med,"k","LineStyle","none", ...
+            "LineWidth",1.7,"CapSize",8,"HandleVisibility","off");
+        scatter(ax,m+deterministicJitter(numel(y),P.figure.jitterWidth),y, ...
+            max(18,round(P.figure.pointSize*.55)), ...
+            "MarkerFaceColor",mixWithWhite(P.morphColors(m,:),.38), ...
+            "MarkerEdgeColor","k","LineWidth",.45,"MarkerFaceAlpha",.82, ...
+            "HandleVisibility","off");
+    end
+    set(ax,"XTick",1:numel(P.morphOrder),"XTickLabel",tickLabels, ...
+        "TickDir","out","Box","off");
+    xlim(ax,P.figure.morphXLimits); ylabel(ax,labels(k)); grid(ax,"on");
+    sub=Stats(Stats.metricOut==vars(k),:);
+    title(ax,plannedKWTitle(sub),"FontWeight","normal");
+    addMorphPairwiseBars(ax,sub,P.morphOrder);
+end
+ax=nexttile(tl); hold(ax,"on");
+[D,centers,~]=normalizedFishAHVDensities(Samples,P);
+for m=1:numel(P.morphOrder)
+    rows=find([Samples.morph]==string(P.morphOrder{m}) & all(isfinite(D),2)');
+    pale=mixWithWhite(P.morphColors(m,:),.72);
+    for f=rows
+        plot(ax,centers,D(f,:),"Color",pale,"LineWidth",.45, ...
+            "HandleVisibility","off");
+    end
+    if ~isempty(rows)
+        plot(ax,centers,mean(D(rows,:),1),"Color",P.morphColors(m,:), ...
+            "LineWidth",2.2,"DisplayName",sprintf("%s (n=%d fish)", ...
+            P.morphOrder{m},numel(rows)));
+    end
+end
+xline(ax,0,":","Color",[.35 .35 .35],"HandleVisibility","off");
+xlabel(ax,"Signed AHV"); ylabel(ax,"Probability density (equal fish weight)");
+set(ax,"TickDir","out","Box","off"); grid(ax,"on"); legend(ax,"Location","best");
+distStats=Stats(Stats.metricOut=="signedAHVDistribution",:);
+title(ax,"Per-fish-normalized signed-AHV distributions", ...
+    "FontWeight","normal");
+addDistributionTestText(ax,distStats);
+title(tl,"Fish-level AHV summaries", ...
+    "Interpreter","none","FontWeight","bold");
 saveFigureBoth(fig,outputDir,baseName,P);
 end
 
+function addDistributionTestText(ax,T)
+pieces=strings(height(T),1);
+for i=1:height(T)
+    pieces(i)=string(shortMorph(T.groupA{i}))+"-"+ ...
+        string(shortMorph(T.groupB{i}))+": "+ ...
+        string(significanceLabel(T.pAdjusted(i)))+ ...
+        " (p="+string(formatP(T.pAdjusted(i)))+")";
+end
+text(ax,.02,.98,strjoin(cellstr(pieces),newline),"Units","normalized", ...
+    "HorizontalAlignment","left","VerticalAlignment","top","FontSize",8, ...
+    "Interpreter","none","BackgroundColor","w","Margin",2);
+end
+
+function Summary = plotPairedIncrementalR2(Fish,Stats,P,outputDir,baseName)
+labels = {'Blocked-CV Delta R^2 phase','Blocked-CV Delta R^2 AHV'};
+vars = {'median_deltaR2Phase','median_deltaR2Behavior'};
+offsets = [-0.12 0 0.12];
+fig = figure('Visible',P.figure.visible,'Color','w','Position',[80 80 720 500]);
+ax = axes(fig); hold(ax,'on'); yline(ax,0,':','Color',[0.6 0.6 0.6], ...
+    'HandleVisibility','off');
+Summary = table(); pText = cell(numel(P.morphOrder),1);
+for m = 1:numel(P.morphOrder)
+    idx = strcmp(Fish.morph,P.morphOrder{m});
+    X = [Fish.(vars{1}),Fish.(vars{2})];
+    X = X(idx,:); X = X(all(isfinite(X),2),:);
+    means = mean(X,1); ci = nan(2,2);
+    for j = 1:2
+        ci(j,:) = bootstrapMeanCI(X(:,j),P.stats.nBootstrap,P.stats.bootstrapCI);
+    end
+    positions = [1 2] + offsets(m);
+    plot(ax,positions,means,'-o','Color',P.morphColors(m,:), ...
+        'MarkerFaceColor',P.morphColors(m,:),'MarkerEdgeColor','k', ...
+        'LineWidth',1.8,'DisplayName',P.morphOrder{m});
+    for j = 1:2
+        errorbar(ax,positions(j),means(j),means(j)-ci(j,1),ci(j,2)-means(j), ...
+            'Color',P.morphColors(m,:),'LineStyle','none','LineWidth',1.5, ...
+            'CapSize',8,'HandleVisibility','off');
+        morph = string(P.morphOrder{m}); metric = string(vars{j});
+        nFish = size(X,1); meanFishMedians = means(j); ciLow = ci(j,1); ciHigh = ci(j,2);
+        Summary = appendCompatibleTables(Summary, ...
+            table(morph,metric,nFish,meanFishMedians,ciLow,ciHigh));
+    end
+    S = Stats(strcmp(Stats.scope,P.morphOrder{m}),:);
+    if isempty(S); p = NaN; else; p = S.pAdjusted(1); end
+    pText{m} = sprintf('%s paired p=%s',P.morphOrder{m},formatP(p));
+end
+set(ax,'XTick',1:2,'XTickLabel',labels,'XTickLabelRotation',0, ...
+    'TickDir','out','Box','off'); xlim(ax,[0.6 2.4]); grid(ax,'on');
+ylabel(ax,'Mean fish-median blocked-CV Delta R^2');
+legend(ax,'Location','best');
+text(ax,0.02,0.98,strjoin(pText,newline),'Units','normalized', ...
+    'VerticalAlignment','top','FontSize',9,'BackgroundColor','w','Margin',2);
+title(ax,['Cross-validated incremental predictive contributions by morph' newline ...
+    'Centers: mean across fish medians; error bars: fish-bootstrap 95% CI'], ...
+    'FontWeight','normal');
+saveFigureBoth(fig,outputDir,baseName,P);
+end
+
+function ci = bootstrapMeanCI(x,nBoot,limits)
+x = x(isfinite(x));
+if isempty(x); ci = [NaN NaN]; return; end
+if numel(x)==1; ci = [x x]; return; end
+n = numel(x); boot = mean(x(randi(n,n,nBoot)),1);
+ci = prctile(boot(:),limits);
+end
+
 function plotPairedModelCV(Fish,PairStats,FriedmanStats,P,outputDir,baseName)
-models = P.modelNames;
-vars = P.modelMetricNames;
-modelColors=[0.55 0.55 0.55; 0.45 0.20 0.70; ...
+figureModelOrder = [1 3 2]; % phase + AHV, phase, AHV
+models = P.modelNames(figureModelOrder);
+vars = P.modelMetricNames(figureModelOrder);
+allModelColors=[0.55 0.55 0.55; 0.45 0.20 0.70; ...
     0.10 0.62 0.56; 0.25 0.55 0.85];
+modelColors = allModelColors(figureModelOrder,:);
 fig=figure('Visible',P.figure.visible,'Color','w', ...
     'Position',[50 80 470*numel(P.morphOrder) 430]);
 tl=tiledlayout(fig,1,numel(P.morphOrder),'TileSpacing','compact','Padding','compact');
 for m=1:numel(P.morphOrder)
     ax=nexttile(tl); hold(ax,'on'); yline(ax,0,':','Color',[0.65 0.65 0.65]);
     idx=strcmp(Fish.morph,P.morphOrder{m});
-    X=[Fish.(vars{1}),Fish.(vars{2}),Fish.(vars{3}),Fish.(vars{4})];
+    X=[Fish.(vars{1}),Fish.(vars{2}),Fish.(vars{3})];
     X=X(idx,:); X=X(all(isfinite(X),2),:);
     for f=1:size(X,1)
-        plot(ax,1:4,X(f,:),'-o','Color',mixWithWhite(P.morphColors(m,:),0.58), ...
+        plot(ax,1:numel(models),X(f,:),'-o','Color',mixWithWhite(P.morphColors(m,:),0.58), ...
             'MarkerFaceColor',mixWithWhite(P.morphColors(m,:),0.35), ...
             'MarkerEdgeColor','none','LineWidth',0.9,'HandleVisibility','off');
     end
-    for j=1:4
+    for j=1:numel(models)
         [med,ci]=bootstrapMedianCI(X(:,j),P.stats.nBootstrap,P.stats.bootstrapCI);
         plot(ax,[j j],ci,'k-','LineWidth',2.2,'HandleVisibility','off');
         scatter(ax,j,med,80,'d','MarkerFaceColor',modelColors(j,:), ...
             'MarkerEdgeColor','k','LineWidth',1.1,'HandleVisibility','off');
     end
-    set(ax,'XTick',1:4,'XTickLabel',models,'XTickLabelRotation',18, ...
-        'TickDir','out','Box','off'); xlim(ax,[0.65 4.35]); grid(ax,'on');
+    set(ax,'XTick',1:numel(models),'XTickLabel',models,'XTickLabelRotation',18, ...
+        'TickDir','out','Box','off'); xlim(ax,[0.65 numel(models)+0.35]); grid(ax,'on');
     ylabel(ax,'Median held-out R^2 per fish');
     fr=FriedmanStats(strcmp(FriedmanStats.scope,P.morphOrder{m}),:);
     if isempty(fr); pF=NaN; else; pF=fr.pAdjusted(1); end
@@ -1882,7 +2117,7 @@ for m=1:nRows
             plot(ax,2,median(b),'kd','MarkerFaceColor','w','MarkerSize',8,'LineWidth',1.3);
         end
         set(ax,'XTick',[1 2], ...
-            'XTickLabel',{'phase + AHV','phase + AHV + forward + vigor'}, ...
+            'XTickLabel',{'phase + AHV','phase + AHV'}, ...
             'TickDir','out','Box','off'); xlim(ax,[0.65 2.35]); grid(ax,'on');
         if k==1; ylabel(ax,P.morphOrder{m},'FontWeight','bold'); end
         p=safeSignrank(a,b);
@@ -1907,12 +2142,15 @@ else
 end
 nRows = ceil(n/nCols);
 fig = figure('Visible', P.figure.visible, 'Color', 'w', ...
-    'Position', [60 60 440*nCols 360*nRows]);
+    'Position', [60 60 360*nCols 360*nRows]);
 tl = tiledlayout(fig, nRows, nCols, 'TileSpacing','compact','Padding','compact');
 
 for k = 1:n
     ax = nexttile(tl); hold(ax,'on');
     plotOneFishMetric(ax, Fish, selected(k), Omnibus, Pairwise, P);
+    if strcmp(baseName, '06_primary_raw_coefficients_fish_medians')
+        ax.XTickLabelRotation = 0;
+    end
 end
 title(tl, figureTitle, 'Interpreter','none', 'FontWeight','bold');
 saveFigureBoth(fig, outputDir, baseName, P);
@@ -1930,7 +2168,7 @@ for m = 1:numel(P.morphOrder)
     if isempty(y); continue; end
 
     [med, ci] = bootstrapMedianCI(y, P.stats.nBootstrap, P.stats.bootstrapCI);
-    bar(ax,m,med,0.68,'FaceColor',P.morphColors(m,:), ...
+    bar(ax,m,med,P.figure.morphBarWidth,'FaceColor',P.morphColors(m,:), ...
         'FaceAlpha',0.78,'EdgeColor','k','LineWidth',0.8, ...
         'HandleVisibility','off');
     errorbar(ax,m,med,med-ci(1),ci(2)-med,'k','LineStyle','none', ...
@@ -1943,8 +2181,13 @@ for m = 1:numel(P.morphOrder)
         'MarkerFaceAlpha',0.82);
 end
 
-xlim(ax, [0.5 numel(P.morphOrder)+0.5]);
-set(ax, 'XTick',1:numel(P.morphOrder), 'XTickLabel',P.morphOrder, ...
+xlim(ax,P.figure.morphXLimits);
+tickLabels = cell(size(P.morphOrder));
+for m = 1:numel(P.morphOrder)
+    nFishShown = sum(strcmp(Fish.morph,P.morphOrder{m}) & isfinite(Fish.(M.name)));
+    tickLabels{m} = sprintf('%s (n=%d fish)',P.morphOrder{m},nFishShown);
+end
+set(ax, 'XTick',1:numel(P.morphOrder), 'XTickLabel',tickLabels, ...
     'TickDir','out', 'Box','off');
 ylabel(ax, M.label, 'Interpreter','tex');
 grid(ax,'on');
@@ -1952,18 +2195,20 @@ if strcmp(M.summary,'fraction_positive') || startsWith(M.name,'fraction_')
     ylim(ax,[0 1]);
 end
 
-idxO = strcmp(Omnibus.metric, M.name);
-if any(idxO)
-    pKW = Omnibus.pAdjusted(find(idxO,1));
-else
-    pKW = NaN;
-end
-title(ax, sprintf('KW p=%s', formatP(pKW)), ...
-    'FontWeight','normal');
-
 idxP = strcmp(Pairwise.metric, M.name);
 sub = Pairwise(idxP,:);
+title(ax, plannedKWTitle(sub), 'FontWeight','normal');
 addMorphPairwiseBars(ax,sub,P.morphOrder);
+if strcmp(M.name,"median_b1_raw")
+    pieces=strings(numel(P.morphOrder),1);
+    for m=1:numel(P.morphOrder)
+        x=Fish.(M.name)(strcmp(Fish.morph,P.morphOrder{m})); x=x(isfinite(x)); pv=NaN;
+        if numel(x)>=P.stats.minFishPerMorph, pv=signrank(x,0,"tail","right"); end
+        pieces(m)=string(P.morphOrder{m})+": b_1>0 p="+string(formatP(pv));
+    end
+    text(ax,.02,.98,strjoin(cellstr(pieces),newline),"Units","normalized", ...
+        "VerticalAlignment","top","BackgroundColor","w","Margin",2,"FontSize",8);
+end
 end
 
 function jitter = deterministicJitter(n, width)
@@ -2100,7 +2345,7 @@ function plotClassStratifiedMetrics(FishClass, Metrics, Omnibus, Pairwise, ...
 nRows = numel(P.classAnalysis.classes);
 nCols = numel(Metrics);
 fig = figure('Visible',P.figure.visible,'Color','w', ...
-    'Position',[30 30 380*nCols 305*nRows]);
+    'Position',[30 30 330*nCols 305*nRows]);
 tl = tiledlayout(fig,nRows,nCols,'TileSpacing','compact','Padding','compact');
 
 for c = 1:nRows
@@ -2117,7 +2362,7 @@ for c = 1:nRows
             y = y(isfinite(y));
             if isempty(y); continue; end
             [med,ci] = bootstrapMedianCI(y,P.stats.nBootstrap,P.stats.bootstrapCI);
-            bar(ax,m,med,0.68,'FaceColor',P.morphColors(m,:), ...
+            bar(ax,m,med,P.figure.morphBarWidth,'FaceColor',P.morphColors(m,:), ...
                 'FaceAlpha',0.78,'EdgeColor','k','LineWidth',0.7, ...
                 'HandleVisibility','off');
             errorbar(ax,m,med,med-ci(1),ci(2)-med,'k','LineStyle','none', ...
@@ -2129,21 +2374,15 @@ for c = 1:nRows
         end
         set(ax,'XTick',1:numel(P.morphOrder),'XTickLabel',P.morphOrder, ...
             'TickDir','out','Box','off');
-        xlim(ax,[0.5 numel(P.morphOrder)+0.5]); grid(ax,'on');
+        xlim(ax,P.figure.morphXLimits); grid(ax,'on');
         if c < nRows; set(ax,'XTickLabel',[]); end
         if k == 1; ylabel(ax,cls,'FontWeight','bold'); end
-        idx = strcmp(Omnibus.analysisScope,cls) & strcmp(Omnibus.metric,M.name);
-        p = NaN;
-        if any(idx); p = Omnibus.pAdjusted(find(idx,1)); end
-        title(ax,sprintf('%s | KW p=%s',M.label,formatP(p)), ...
-            'FontWeight','normal','Interpreter','tex','FontSize',9);
-
-        % Display both pre-specified cavefish-versus-Surface comparisons.
-        % With the default settings these are the raw, uncorrected planned
-        % p-values; pAdjusted is retained as the generic output column name.
+        % Display all three pre-specified pairwise two-group KW tests.
         idxP = strcmp(Pairwise.analysisScope,cls) & ...
             strcmp(Pairwise.metric,M.name);
         sub = Pairwise(idxP,:);
+        title(ax,sprintf('%s | %s',M.label,plannedKWTitle(sub)), ...
+            'FontWeight','normal','Interpreter','tex','FontSize',9);
         addMorphPairwiseBars(ax,sub,P.morphOrder);
     end
 end
@@ -2154,8 +2393,8 @@ saveFigureBoth(fig,outputDir,baseName,P);
 end
 
 function addMorphPairwiseBars(ax,sub,morphOrder)
-% Add the two planned Surface-Molino and Surface-Pachon comparisons when
-% their fish-level rank-sum p-values are available.
+% Add the three planned pairwise morph comparisons when
+% their fish-level two-group Kruskal-Wallis p-values are available.
 if isempty(sub) || ~ismember('pAdjusted',sub.Properties.VariableNames)
     return;
 end
@@ -2252,6 +2491,19 @@ switch morph
 end
 end
 
+function s = plannedKWTitle(sub)
+if isempty(sub)
+    s = 'Two-group KW: NA';
+    return;
+end
+parts = cell(height(sub),1);
+for i = 1:height(sub)
+    parts{i} = sprintf('%s-%s p=%s',shortMorph(sub.groupA{i}), ...
+        shortMorph(sub.groupB{i}),formatP(sub.pAdjusted(i)));
+end
+s = ['Two-group KW: ' strjoin(parts,'; ')];
+end
+
 function s = formatP(p)
 if ~isfinite(p)
     s = 'NA';
@@ -2290,7 +2542,7 @@ if fid < 0
     return;
 end
 cleanup = onCleanup(@() fclose(fid)); %#ok<NASGU>
-fprintf(fid,'Cross-morph matched four-model HD/AHV analysis\n\n');
+fprintf(fid,'Cross-morph matched three-model HD/AHV analysis\n\n');
 fprintf(fid,'Source fitting script: %s\n',P.sourceFittingScript);
 fprintf(fid,'Independent replicate: fish/session.\n');
 fprintf(fid,'Neurons are nested within fish and are not treated as independent n.\n');
@@ -2306,61 +2558,29 @@ else
     fprintf(fid,'Recording exclusions disabled.\n');
 end
 fprintf(fid,'Model 1 - phase + AHV: phase cosine + phase sine + absolute AHV + signed AHV.\n');
-fprintf(fid,['Model 2 - phase + AHV + forward + vigor: phase cosine + phase ' ...
-    'sine + absolute AHV + signed AHV + forward bouts + vigor.\n']);
+fprintf(fid,'Model 2 - AHV: absolute AHV + signed AHV.\n');
 fprintf(fid,'Model 3 - phase: phase cosine + phase sine.\n');
-fprintf(fid,['Model 4 - AHV + forward + vigor: absolute AHV + signed AHV + ' ...
-    'forward bouts + vigor.\n']);
-fprintf(fid,'Primary omnibus test: three-morph Kruskal-Wallis on fish summaries.\n');
-fprintf(fid,'Planned contrasts: Molino-Surface and Pachon-Surface rank-sum tests.\n');
-if strcmpi(P.stats.multipleComparisonMethod,'none')
-    fprintf(fid,['Multiplicity control: none for the two explicitly planned ' ...
-        'Surface-Molino and Surface-Pachon contrasts.\n']);
-else
-    fprintf(fid,['Multiplicity control: the two planned contrasts use %s ' ...
-        'separately within each outcome and analysis scope.\n'], ...
-        P.stats.multipleComparisonMethod);
-end
-if P.stats.correctOmnibusAcrossMetrics
-    fprintf(fid,['Omnibus p-values are additionally corrected across metrics ' ...
-        'within each prespecified figure family.\n']);
-else
-    fprintf(fid,['Omnibus p-values are unadjusted: each is the single three-morph ' ...
-        'test for its biological outcome.\n']);
-end
-fprintf(fid,'Effect: group B minus group A difference in fish-level medians.\n');
-fprintf(fid,'Effect CI: percentile bootstrap resampling fish within morph (%d draws).\n', ...
-    P.stats.nBootstrap);
+fprintf(fid,'No three-group omnibus test is run.\n');
+fprintf(fid,'Planned tests: two-group Kruskal-Wallis for Surface-Molino, Surface-Pachon, and Molino-Pachon fish medians.\n');
 fprintf(fid,'Within-morph model tests are paired sign-rank tests on fish summaries.\n');
-fprintf(fid,['Nested phase-amplitude and phase + AHV versus phase + AHV + ' ...
-    'forward + vigor coefficient tests are paired at the fish level.\n']);
-fprintf(fid,['All upstream-selected phase-tuned neurons passing numerical fit QC ' ...
-    'were included; no downstream coefficient-significance filter was applied.\n']);
-fprintf(fid,'Raw b1/b2 units: activity SD per rad/s when the upstream fitting script was unchanged.\n');
-fprintf(fid,'b1 signed = net speed effect; abs(b1) = complementary speed encoding strength.\n');
-fprintf(fid,'Standardized bF/bV are primary across morphs because raw F/V scaling may differ.\n');
-fprintf(fid,'Negative cross-validated R^2 and unique contributions were retained.\n');
-fprintf(fid,['cvUniquePhase = 1 - SSE_(phase+AHV+forward+vigor) / ' ...
-    'SSE_(AHV+forward+vigor).\n']);
-fprintf(fid,['cvUniqueAddedBehavior = 1 - SSE_(phase+AHV+forward+vigor) / ' ...
-    'SSE_(phase+AHV).\n']);
-fprintf(fid,['cvUniqueAHVBeyondPhase = 1 - SSE_(phase+AHV) / ' ...
-    'SSE_phase.\n']);
-fprintf(fid,['cvUniqueAllBehaviorBeyondPhase = 1 - ' ...
-    'SSE_(phase+AHV+forward+vigor) / SSE_phase.\n']);
-fprintf(fid,['All four CV scores and all unique-contribution summaries use only ' ...
-    'neurons with finite matched outputs for every model.\n']);
-fprintf(fid,['Matched nested contrasts add AHV to phase, add all behavior ' ...
-    'to phase, add forward + vigor to phase + AHV, and add phase to ' ...
-    'AHV + forward + vigor.\n']);
+fprintf(fid,'cvUniquePhase = 1 - SSE_(phase+AHV) / SSE_AHV.\n');
+fprintf(fid,'cvUniqueAHVBeyondPhase = 1 - SSE_(phase+AHV) / SSE_phase.\n');
+fprintf(fid,'All three models use identical neurons, frames and CV folds.\n');
+fprintf(fid,'Figure 10 centers are means across fish-level neuron medians; error bars are fish-bootstrap 95%% confidence intervals.\n');
+fprintf(fid,'Figure 10 paired tests retain paired fish-level values and never test displayed morph averages.\n');
 fprintf(fid,['Absolute phase-model performance is conditional on selecting ' ...
     'phase-tuned neurons upstream; nested comparisons use the same selected set.\n']);
 fprintf(fid,'VIF and condition number are diagnostics unless exclusion is explicitly enabled.\n');
 fprintf(fid,'Class-stratified results are secondary/descriptive because class was model-derived.\n');
-fprintf(fid,['ROC is computed only from out-of-fold observed and predicted traces. ' ...
-    'Positive activity state: observed z-score > %.3f.\n'],P.roc.activityThresholdZ);
-fprintf(fid,['ROC/AUC is a secondary thresholded activity-state analysis and does ' ...
-    'not replace the continuous blocked-CV R^2 analysis.\n']);
+if P.fishR2Exclusion.enabled
+    fprintf(fid,[ ...
+        'Fish-level model-performance exclusion enabled: a fish was removed ' ...
+        'from all figures and tests if at least one of the three model median ' ...
+        'held-out R2 values was below %.3f.\n'], ...
+        P.fishR2Exclusion.threshold);
+else
+    fprintf(fid,'Fish-level model-performance exclusion disabled.\n');
+end
 end
 
 function x = wrapToPiLocal(x)

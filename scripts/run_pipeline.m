@@ -9,11 +9,12 @@ function results = run_pipeline(varargin)
 % data_processed/ are reused by default. Use ForceModelRefit to rebuild them.
 %
 % Steps:
-%   1) fit four models and classify phase-tuned neurons;
+%   1) fit three models and classify phase-tuned neurons;
 %   2) compare fitted parameters across morphs;
-%   3) compare anatomical populations;
+%   3) compare core behavior across morphs;
 %   4) reproduce poster candidate-cell figures;
-%   5) compare CW, CCW and Symmetric cells.
+%   5) compare class abundance, anatomy, AHV response, speed, behavior and
+%      preferred-direction features across morphs.
 
 scriptsDir = fileparts(mfilename('fullpath'));
 addpath(scriptsDir);
@@ -29,9 +30,9 @@ results = struct();
 if fitModels
     fprintf('%s', newline);
     if cfg.ForceModelRefit
-        fprintf('[1/5] ForceModelRefit=true; fitting four matched models for all morphs...');
+        fprintf('[1/5] ForceModelRefit=true; fitting three matched models for all morphs...');
     else
-        fprintf('[1/5] Processed model inputs are incomplete; fitting four matched models for all morphs...');
+        fprintf('[1/5] Processed model inputs are incomplete; fitting three matched models for all morphs...');
         fprintf('%s', newline);
         for iMissing = 1:numel(cachedModelFits.missing)
             fprintf('  %s', cachedModelFits.missing{iMissing});
@@ -40,7 +41,7 @@ if fitModels
     end
     fprintf('%s', newline);
     results.modelFits = ...
-        fit_neuron_HD_AHV_four_models_behavior_tuned_cells_only_ROC(cfg);
+        fit_neuron_HD_AHV_three_models_behavior_tuned_cells_only_ROC(cfg);
 else
     fprintf('%s', newline);
     fprintf('[1/5] Reusing complete model outputs in data_processed; model fitting skipped.');
@@ -53,9 +54,9 @@ fprintf('\n[2/5] Comparing model parameters across morphs...\n');
 results.modelComparison = ...
     compare_HD_AHV_model_with_phase_only_behavior_params_across_morphs_v3(cfg);
 
-fprintf('\n[3/5] Comparing anatomical populations across morphs...\n');
-results.anatomyComparison = ...
-    compare_anatomical_populations_across_morphs_adapted_stats(cfg);
+
+fprintf('\n[3/5] Comparing core behavior across morphs...\n');
+results.coreBehaviorComparison = compare_core_behavior_across_morphs(cfg);
 
 fprintf('\n[4/5] Reproducing poster candidate-cell figures...\n');
 results.posterFigures = reproduce_poster_fig3A_fig4E_H_candidate_cells_v2( ...
@@ -63,7 +64,8 @@ results.posterFigures = reproduce_poster_fig3A_fig4E_H_candidate_cells_v2( ...
     'OutputDir', cfg.PosterFigureDir, ...
     'Visible', cfg.FigureVisible);
 
-fprintf('\n[5/5] Comparing CW, CCW and Symmetric classes...\n');
+
+fprintf('\n[5/5] Comparing class features across morphs...\n');
 classifiedFiles = dir(fullfile(cfg.ClassifiedCandidateDir, '**', ...
     '*_candidate_neurons_clean_classified.mat'));
 classifiedFiles = arrayfun(@(x) fullfile(x.folder, x.name), ...
@@ -72,9 +74,11 @@ if isempty(classifiedFiles)
     error(['No centralized classified candidate files were produced. ' ...
         'Inspect the model-fitting output before running the class comparison.']);
 end
-results.classComparison = compare_CW_CCW_Symmetric_across_morphs_v4( ...
+
+results.classFeatureComparison = compare_class_features_across_morphs( ...
     'Files', classifiedFiles, ...
-    'OutputDir', cfg.ClassComparisonDir, ...
+    'DataRoot', cfg.DataRoot, ...
+    'OutputDir', fullfile(cfg.ClassComparisonDir,'specified_features'), ...
     'Visible', cfg.FigureVisible);
 
 save(fullfile(cfg.DataProcessedDir, 'pipeline_run_summary.mat'), ...
@@ -93,9 +97,9 @@ cache.missing = {};
 
 for m = 1:numel(cfg.Morphs)
     morph = cfg.Morphs(m);
-    modelFile = fullfile(cfg.ModelDataDir, sprintf([ ...
-        'HD_AHV_behavior_augmented_phase_tuned_only_' ...
-        'with_phase_only_results_%s.mat'], morph.name));
+    modelFile = fullfile(cfg.ModelDataDir, sprintf( ...
+        'HD_AHV_three_models_phase_tuned_only_results_%s.mat', ...
+        morph.name));
     cache.modelFiles{m} = modelFile;
     if ~isfile(modelFile)
         cache.missing{end+1,1} = sprintf( ...
@@ -108,6 +112,70 @@ for m = 1:numel(cfg.Morphs)
                 cache.missing{end+1,1} = sprintf( ...
                     '%s has neither AllNeurons nor Results: %s', ...
                     morph.display, modelFile);
+            elseif ~all(ismember({'P','sessions'}, names))
+                cache.missing{end+1,1} = sprintf( ...
+                    '%s cached results lack cohort/QC metadata: %s', ...
+                    morph.display, modelFile);
+            else
+                cached = load(modelFile, 'P', 'sessions', 'AllNeurons', 'Results');
+                sessionFailure = ~isfield(cached,'Results') || ~iscell(cached.Results) || ...
+                    any(cellfun(@(r) isstruct(r) && isfield(r,'error'), cached.Results));
+                if sessionFailure
+                    cache.missing{end+1,1} = sprintf( ...
+                        '%s cached results contain a failed or missing session: %s', ...
+                        morph.display, modelFile);
+                end
+                requiredFitColumns = {'pA','pB1','pB2','nFitSamples', ...
+                    'failureReason','pB2Adjusted','class', ...
+                    'cvR2PhaseOnly','cvR2Behavior','cvR2Full'};
+                validFitTable = isfield(cached,'AllNeurons') && ...
+                    istable(cached.AllNeurons) && height(cached.AllNeurons)>0 && ...
+                    all(ismember(requiredFitColumns, ...
+                    cached.AllNeurons.Properties.VariableNames));
+                if ~validFitTable
+                    cache.missing{end+1,1} = sprintf( ...
+                        '%s cached results lack completed pooled classification: %s', ...
+                        morph.display, modelFile);
+                elseif any(strcmp(string(cached.AllNeurons.class),'PendingPooledBonferroni'))
+                    cache.missing{end+1,1} = sprintf( ...
+                        '%s cached results still have pending pooled labels: %s', ...
+                        morph.display, modelFile);
+                end
+                threeModelCache = isfield(cached.P, 'model') && ...
+                    isfield(cached.P.model, 'version') && ...
+                    strcmp(cached.P.model.version, ...
+                    'three_models_fixed_source_pref_turn_bias_v2');
+                responseScaleMatches = isfield(cached.P.model, 'zscoreActivityWithinFitWindow') && ...
+                    logical(cached.P.model.zscoreActivityWithinFitWindow);
+                if ~responseScaleMatches
+                    cache.missing{end+1,1} = sprintf( ...
+                        '%s cached response normalization does not match the current fitter: %s', ...
+                        morph.display, modelFile);
+                end
+                if ~threeModelCache
+                    cache.missing{end+1,1} = sprintf( ...
+                        '%s cached results do not match the current three-model design: %s', ...
+                        morph.display, modelFile);
+                end
+                rotationGateMatches = isfield(cached.P, 'lowTurnQC') && ...
+                    isfield(cached.P.lowTurnQC, 'enabled') && ...
+                    ~logical(cached.P.lowTurnQC.enabled) && ...
+                    isfield(cached.P.lowTurnQC, 'minRotationsEachDirection') && ...
+                    cached.P.lowTurnQC.minRotationsEachDirection==0;
+                if ~rotationGateMatches
+                    cache.missing{end+1,1} = sprintf( ...
+                        '%s cached results do not match the current rotation-QC settings: %s', ...
+                        morph.display, modelFile);
+                end
+                expectedNames = recordingFolderNames(morph.dataDir);
+                cachedNames = string({cached.sessions.name});
+                if ~isequal(sort(lower(cachedNames(:))), ...
+                        sort(lower(expectedNames(:))))
+                    cache.missing{end+1,1} = sprintf( ...
+                        ['%s cached cohort does not cover every rec folder ' ...
+                         '(cached %d, current %d): %s'], morph.display, ...
+                        numel(cachedNames), numel(expectedNames), modelFile);
+                end
             end
         catch ME
             cache.missing{end+1,1} = sprintf( ...
@@ -143,6 +211,20 @@ for m = 1:numel(cfg.Morphs)
     end
 end
 
+summaryFile=fullfile(cfg.ModelDataDir,'three_model_fit_pipeline_summary.mat');
+try
+    summary=load(summaryFile,'pipelineResults');
+    validSummary=isfield(summary,'pipelineResults') && ...
+        isfield(summary.pipelineResults,'pooledBonferroni') && ...
+        isfield(summary.pipelineResults.pooledBonferroni,'nTestsB2') && ...
+        summary.pipelineResults.pooledBonferroni.nTestsB2>0;
+catch
+    validSummary=false;
+end
+if ~validSummary
+    cache.missing{end+1,1} = sprintf('Missing or incomplete pooled Bonferroni summary: %s',summaryFile);
+end
+
 isComplete = isempty(cache.missing);
 if isComplete
     cache.reason = ['Complete morph-level model results and classified ' ...
@@ -159,28 +241,29 @@ for m = 1:numel(cfg.Morphs)
     if exist(morph.dataDir, 'dir') ~= 7
         error('Missing morph data directory: %s', morph.dataDir);
     end
-    candidates = dir(fullfile(morph.dataDir, '**', ...
-        '*_candidate_neurons_clean.mat'));
-    candidateFolders = unique(string({candidates.folder}));
-    if isempty(candidateFolders)
-        error('%s has no clean candidate files under: %s', ...
-            morph.display, morph.dataDir);
+    recNames = recordingFolderNames(morph.dataDir);
+    if isempty(recNames)
+        error('%s has no rec* folders under: %s', morph.display, morph.dataDir);
     end
-    if requireModelInputs
-        behaviors = dir(fullfile(morph.dataDir, '**', ...
-            '*swimResults_pass2*.mat'));
-        behaviorFolders = unique(string({behaviors.folder}));
-        foldersToValidate = intersect(candidateFolders, behaviorFolders);
-        if isempty(foldersToValidate)
-            error(['%s has no recording folder containing both a clean ' ...
-                'candidate file and DLC pass-2 behavior.'], morph.display);
-        end
-    else
-        foldersToValidate = candidateFolders;
-    end
+    foldersToValidate = fullfile(string(morph.dataDir), recNames);
     for f = 1:numel(foldersToValidate)
         candidate = dir(fullfile(char(foldersToValidate(f)), ...
             '*_candidate_neurons_clean.mat'));
+        candidateNames = lower(string({candidate.name}));
+        candidate = candidate(~contains(candidateNames, ...
+            ["_classified","_direct_model"]));
+        if isempty(candidate)
+            error('%s is missing a clean candidate file.', ...
+                char(foldersToValidate(f)));
+        end
+        if requireModelInputs
+            behavior = dir(fullfile(char(foldersToValidate(f)), ...
+                '*swimResults_pass2*.mat'));
+            if isempty(behavior)
+                error('%s is missing DLC pass-2 behavior.', ...
+                    char(foldersToValidate(f)));
+            end
+        end
         variables = whos('-file', fullfile(candidate(1).folder, candidate(1).name));
         missing = setdiff(requiredCandidateVariables, {variables.name});
         if ~isempty(missing)
@@ -188,10 +271,6 @@ for m = 1:numel(cfg.Morphs)
                 fullfile(candidate(1).folder,candidate(1).name), ...
                 strjoin(missing, ', '));
         end
-    end
-    if ~isfile(morph.anatomyModelFile)
-        error('Missing anatomy model for %s: %s', ...
-            morph.display, morph.anatomyModelFile);
     end
     if requireModelInputs
         fprintf('Preflight %s: %d model-ready paired recording folders.', ...
@@ -203,4 +282,11 @@ for m = 1:numel(cfg.Morphs)
     end
     fprintf('%s', newline);
 end
+end
+
+function names = recordingFolderNames(morphDir)
+d = dir(fullfile(morphDir, 'rec*'));
+d = d([d.isdir]);
+names = string({d.name});
+names = names(:);
 end

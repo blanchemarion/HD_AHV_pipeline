@@ -1,11 +1,11 @@
-function pipelineResults = fit_neuron_HD_AHV_four_models_behavior_tuned_cells_only_ROC(cfg)
-%FIT_NEURON_HD_AHV_FOUR_MODELS_BEHAVIOR_TUNED_CELLS_ONLY_ROC
+function pipelineResults = fit_neuron_HD_AHV_three_models_behavior_tuned_cells_only_ROC(cfg)
+%FIT_NEURON_HD_AHV_THREE_MODELS_BEHAVIOR_TUNED_CELLS_ONLY_ROC
 % Fit Surface, Molino and Pachon in one reproducible pipeline run.
 % Pass the struct returned by pipeline_config; outputs are centralized.
 
 % First select network-phase-tuned candidate neurons using the exact
-% ORI_V15 STEP 17 information/shuffle logic, then fit the augmented HD/AHV
-% model only to the selected neurons.
+% ORI_V15 STEP 17 information/shuffle logic, then fit three HD/AHV models
+% only to the selected neurons.
 %
 % Tuning selection is performed separately within each fish:
 %   1) z-score every candidate-neuron trace over time;
@@ -21,66 +21,25 @@ function pipelineResults = fit_neuron_HD_AHV_four_models_behavior_tuned_cells_on
 % Because each candidate cell may contribute to the population phase, the
 % selection remains partly circular unless leave-one-out phase is used.
 %
-% The fitted model is augmented with forward-bout and continuous-vigor controls.
+% For every phase-tuned candidate neuron i, the combined model is:
+%   y_i(t) = betaTheta_i*cos(sourcePrefRad_i - phi(t)) ...
+%          + b1_i*abs(AHV(t)) + b2_i*AHV(t) + c0_i + epsilon_i(t)
 %
-% For every phase-tuned candidate neuron i:
-%   y_i(t) = a_i*cos(phi(t)) + d_i*sin(phi(t)) ...
-%          + b1_i*abs(AHV(t)) + b2_i*AHV(t) ...
-%          + bF_i*F(t) + bV_i*V(t) + c0_i + epsilon_i(t)
+% sourcePrefRad_i is fixed before selection and behavior/AHV loading from
+% the first circular harmonic of the stored tuning_curves_phi_all_cells. It
+% is not re-estimated by any regression below.
 %
-% where:
-%   F(t) = forward-bout impulses, preferably weighted by amp70, convolved
-%          with the same causal calcium kernel used for AHV.
-%   V(t) = continuous vigor, median-centered, convolved with a unit-area
-%          causal calcium kernel, and sampled at calcium times.
+% The script fits three models on identical samples:
+%   phase + AHV: cos(sourcePrefRad_i-phi)+|AHV|+AHV
+%   phase only:  cos(sourcePrefRad_i-phi)
+%   AHV only:    |AHV|+AHV
 %
-% Derived after fitting:
-%   b0_i        = hypot(a_i,d_i)
-%   prefPhase_i = atan2(d_i,a_i)
+% Legacy a/d/b0 fields remain in the output for downstream compatibility:
+% a stores betaTheta, d is zero, b0 is abs(betaTheta), and prefRad is the
+% fixed sourcePrefRad.
 %
-% The script fits four models on the exact same samples. All four models use
-% identical valid-frame masks and identical contiguous CV folds:
-%   phase-only: cos(phi)+sin(phi)
-%   original: cos(phi)+sin(phi)+|AHV|+AHV
-%   behavior: |AHV|+AHV+F+V
-%   augmented: cos(phi)+sin(phi)+|AHV|+AHV+F+V
-%
-% The phase-only model is:
-%   y_i(t) = a_i*cos(phi(t)) + d_i*sin(phi(t)) + c0_i + epsilon_i(t)
-%
-% Its separately saved parameters are phaseOnlyA, phaseOnlyD, phaseOnlyB0,
-% phaseOnlyPrefRad/Deg and phaseOnlyC0. phaseOnlyB0 is derived as
-% hypot(phaseOnlyA,phaseOnlyD), and phaseOnlyPrefRad as
-% atan2(phaseOnlyD,phaseOnlyA).
-%
-% The behavior-only model is:
-%   y_i(t) = b1_i*abs(AHV(t)) + b2_i*AHV(t) ...
-%          + bF_i*F(t) + bV_i*V(t) + c0_i + epsilon_i(t)
-%
-% Unlike earlier versions, this script retains the behavior-only
-% coefficients, standard errors, p-values, standardized coefficients,
-% in-sample R2/adjusted R2, AIC/BIC, residual scale, blocked-CV R2/SSE and
-% aligned out-of-fold predictions. The original model also retains AIC/BIC
-% and standardized coefficients. Thus, all four models are available as
-% complete fitted models rather than the behavior-only model existing only
-% inside the cross-validation loop.
-%
-% Primary control metric:
-%   cvUniquePhase = 1 - SSE_CV(augmented)/SSE_CV(behavior)
-% Negative out-of-sample values are retained; they are not clipped to zero.
-%
-% Additional phase-only comparisons:
-%   cvUniqueAHVBeyondPhase =
-%       1 - SSE_CV(original)/SSE_CV(phase-only)
-%   cvUniqueAllBehaviorBeyondPhase =
-%       1 - SSE_CV(augmented)/SSE_CV(phase-only)
-%
-% For downstream ROC/AUC analysis, the script also saves the aligned
-% out-of-fold observed activity and predictions from all four models in
-% fitTable.cvObserved, fitTable.cvPredPhaseOnly, fitTable.cvPredOriginal,
-% fitTable.cvPredBehavior and fitTable.cvPredFull (the augmented-model
-% compatibility name). Predictions at a frame
-% always come from a model trained without that frame's contiguous test fold.
+% Blocked cross-validation uses identical contiguous folds and common OOF
+% support for all three models, as required by the downstream comparisons.
 %
 % Fish/session folders are discovered automatically for all three morphs.
 
@@ -132,28 +91,25 @@ P.tuning.usePhaseOkIfAvailable = true;
 P.tuning.requirePhaseOk = false; % ORI_V15 falls back to all finite phases
 P.tuning.saveShuffleMatrix = true;
 
-% Causal calcium kernel. AHV and F use event impulses; V uses a unit-area
-% continuous convolution. Keep these values identical to the direct model.
-P.kernel.tauSeconds = 3.0;
-P.kernel.cutoffTau = 6;
+% Causal calcium kernel used for the AHV event impulse train.
+P.kernel.tauSeconds = 5.0;
 P.ahvBoutTime = 'start';       % 'start', 'center', or 'end'
 
-% Forward-bout definition and weighting.
-% First choice: |LI| <= LI_threshold. If unavailable, use dtheta threshold.
-P.forward.useLIThresholdWhenAvailable = true;
-P.forward.fallbackAbsDthetaDeg = 5;
-P.forward.useAmp70Weights = true;
-P.forward.allowUnitWeightFallback = true;
-P.forward.replaceMissingAmp70WithMedian = true;
+P.kernel.ahvDurationSeconds = 20;
 
-% Continuous vigor control.
-P.vigor.requireField = true;            % skip fish if vigor is unavailable
-P.vigor.centerBeforeFiltering = true;   % removes baseline/intercept redundancy
-P.vigor.maximumMissingFraction = 0.20;
+% Published convention: positive AHV = CCW.
+% In p4_build_behavior_features, native positive angles are right/CW.
+P.ahvNativeToPaperSign = -1;
 
-% Same low-turn inclusion rule used in the behavioral summary.
-P.lowTurnQC.enabled = true;
-P.lowTurnQC.minRotationsEachDirection = 0; % matches the attached direct-model script
+% Mei TURN_BIAS: exclude forward/small bouts from the AHV impulse train.
+P.ahvMinAbsBoutAngleRad = 0.239;
+
+P.model.version = 'three_models_fixed_source_pref_turn_bias_v2';
+
+% Retain rotation counts as descriptive QC only. Recording inclusion must not
+% depend on how many positive or negative rotations a fish performed.
+P.lowTurnQC.enabled = false;
+P.lowTurnQC.minRotationsEachDirection = 0;
 
 % Blocked time-series cross-validation. All nested models use identical folds.
 P.cv.enabled = true;
@@ -161,11 +117,11 @@ P.cv.nBlockedFolds = 5;
 P.cv.minTestSamplesPerFold = 20;
 P.cv.saveOOFTraces = true; % required by the downstream ROC/AUC analysis
 
-% CW/CCW/Symmetric labels from the augmented model. These remain secondary:
-% the main purpose of this script is continuous-parameter/variance analysis.
+% CW/CCW/Symmetric labels from the phase+AHV model. All valid coefficient
+% p-values are pooled across every included fish and morph. Bonferroni is
+% then applied separately to betaTheta, b1 and b2 before labels are assigned.
 P.class.alpha = 0.05;
-P.class.bonferroniMode = 'fixed';       % 'fixed' or 'per_fish'
-P.class.fixedNTests = 309;
+P.class.bonferroniScope = 'all_included_cells_across_morphs';
 P.ahvPositiveIsCCW = true;
 
 % Optional non-destructive classified candidate copy.
@@ -213,16 +169,225 @@ for m = 1:numel(cfg.Morphs)
         P, cfg.ModelDataDir, sessionDataDir, figureDir);
 end
 
-save(fullfile(cfg.ModelDataDir, 'four_model_fit_pipeline_summary.mat'), ...
+% Labels must be assigned only after every included cell has been fitted.
+% This pass pools coefficient p-values across all morphs, applies a separate
+% Bonferroni family to betaTheta, b1 and b2, updates every saved result, and
+% only then writes the classified candidate copies.
+pipelineResults.pooledBonferroni = applyPooledBonferroniAcrossPipeline( ...
+    pipelineResults.morphs, cfg);
+
+save(fullfile(cfg.ModelDataDir, 'three_model_fit_pipeline_summary.mat'), ...
     'pipelineResults', '-v7.3');
 disp(' ');
 fprintf('All morphs complete. Processed data: %s', cfg.ModelDataDir);
 fprintf('%s', newline);
 end
 
+function audit = applyPooledBonferroniAcrossPipeline(morphOutputs,cfg)
+% Pool raw coefficient p-values across all successfully fitted cells from
+% every included fish and morph. Each coefficient has its own family.
+pooledPA=[]; pooledPB1=[]; pooledPB2=[]; nIncludedFish=0; pooledAlpha=NaN;
+for m=1:numel(morphOutputs)
+    if isempty(morphOutputs(m).resultFile) || exist(morphOutputs(m).resultFile,'file')~=2
+        continue;
+    end
+    L=load(morphOutputs(m).resultFile,'Results','P');
+    if isnan(pooledAlpha); pooledAlpha=L.P.class.alpha;
+    else; assert(L.P.class.alpha==pooledAlpha, ...
+            'P.class.alpha must be identical across morphs.'); end
+    for s=1:numel(L.Results)
+        R=L.Results{s};
+        if ~isstruct(R) || ~isfield(R,'fit') || isempty(R.fit) || ...
+                ~isfield(R.fit,'nFitSamples')
+            continue;
+        end
+        eligible=R.fit.nFitSamples>=L.P.minSamplesForNeuronFit;
+        pooledPA=[pooledPA;R.fit.pA(eligible & isfinite(R.fit.pA))]; %#ok<AGROW>
+        pooledPB1=[pooledPB1;R.fit.pB1(eligible & isfinite(R.fit.pB1))]; %#ok<AGROW>
+        pooledPB2=[pooledPB2;R.fit.pB2(eligible & isfinite(R.fit.pB2))]; %#ok<AGROW>
+        nIncludedFish=nIncludedFish+1;
+    end
+end
+
+familyN=struct('betaTheta',numel(pooledPA),'b1',numel(pooledPB1), ...
+    'b2',numel(pooledPB2));
+assert(familyN.b2>0,'No valid b2 p-values were available for pooled classification.');
+
+audit=struct();
+audit.scope='all included fitted cells across all fish and morphs';
+audit.method='Bonferroni: adjustedP=min(1,Nfamily*rawP)';
+audit.alpha=pooledAlpha;
+audit.nIncludedFish=nIncludedFish;
+audit.nTestsBetaTheta=familyN.betaTheta;
+audit.nTestsB1=familyN.b1;
+audit.nTestsB2=familyN.b2;
+audit.alphaThresholdBetaTheta=safeBonferroniThreshold(audit.alpha,familyN.betaTheta);
+audit.alphaThresholdB1=safeBonferroniThreshold(audit.alpha,familyN.b1);
+audit.alphaThresholdB2=safeBonferroniThreshold(audit.alpha,familyN.b2);
+
+fprintf(['\nApplying pooled Bonferroni across %d fitted fish: ' ...
+    'betaTheta N=%d, b1 N=%d, b2 N=%d.\n'],nIncludedFish, ...
+    familyN.betaTheta,familyN.b1,familyN.b2);
+
+for m=1:numel(morphOutputs)
+    resultFile=morphOutputs(m).resultFile;
+    if isempty(resultFile) || exist(resultFile,'file')~=2; continue; end
+    L=load(resultFile,'Results','AllNeurons','FishSummary', ...
+        'AllCandidateTuning','TuningFishSummary','P','sessions');
+    Results=L.Results; P=L.P;
+
+    for s=1:numel(Results)
+        R=Results{s};
+        if ~isstruct(R) || ~isfield(R,'fit') || isempty(R.fit) || ...
+                ~isfield(R,'fitTable') || isempty(R.fitTable)
+            continue;
+        end
+
+        [R.fit,labels,ahs,info]=classifyPhaseAHVPooled(R.fit,P,familyN);
+        R.classLabel=labels;
+        R.classInfo=info;
+
+        T=R.fitTable;
+        T.pAAdjusted=R.fit.pAAdjusted;
+        T.pBetaThetaAdjusted=R.fit.pAAdjusted;
+        T.pB1Adjusted=R.fit.pB1Adjusted;
+        T.pB2Adjusted=R.fit.pB2Adjusted;
+        T.class=labels(:);
+        T.ahsLabel=ahs(:);
+        T.pThresholdBetaTheta=repmat(info.alphaThresholdBetaTheta,height(T),1);
+        T.pThresholdB1=repmat(info.alphaThresholdB1,height(T),1);
+        T.pThresholdAHV=repmat(info.alphaThresholdB2,height(T),1);
+        T.bonferroniNTestsBetaTheta=repmat(familyN.betaTheta,height(T),1);
+        T.bonferroniNTestsB1=repmat(familyN.b1,height(T),1);
+        T.bonferroniNTestsB2=repmat(familyN.b2,height(T),1);
+        T.bonferroniNTests=repmat(familyN.b2,height(T),1);
+        T.nValidNeuronsThisFish=repmat(info.nValidNeuronsThisFish,height(T),1);
+        R.fitTable=T;
+
+        Results{s}=R;
+        perFishFile=fullfile(morphOutputs(m).sessionDataDir, ...
+            [R.name '_three_models_phase_tuned_only.mat']);
+        Result=R; %#ok<NASGU>
+        save(perFishFile,'Result','P','-v7.3');
+
+        if P.classificationExport.enabled
+            exportClassifiedCandidate(R.paths.candidatePath,R.paths.behaviorPath, ...
+                R.tuning.candidateIDs,R.tunedCandidateOrder,labels,T,info,R.tuning,P);
+        end
+    end
+
+    fitTables=cellfun(@resultFitTableOrEmpty,Results,'UniformOutput',false);
+    useT=cellfun(@(x) istable(x) && height(x)>0,fitTables);
+    if any(useT); AllNeurons=vertcat(fitTables{useT}); else; AllNeurons=table(); end
+    fishTables=cellfun(@resultFishTableOrEmpty,Results,'UniformOutput',false);
+    useF=cellfun(@(x) istable(x) && height(x)>0,fishTables);
+    if any(useF); FishSummary=vertcat(fishTables{useF}); else; FishSummary=table(); end
+    AllCandidateTuning=L.AllCandidateTuning;
+    TuningFishSummary=L.TuningFishSummary;
+    sessions=L.sessions;
+    save(resultFile,'Results','AllNeurons','FishSummary','AllCandidateTuning', ...
+        'TuningFishSummary','P','sessions','-v7.3');
+
+    nameStem='HD_AHV_three_models_phase_tuned_only';
+    if ~isempty(AllNeurons)
+        writeNeuronScalarCSV(AllNeurons,fullfile(cfg.ModelDataDir, ...
+            sprintf('%s_neurons_%s.csv',nameStem,P.morphName)));
+    end
+    if ~isempty(FishSummary)
+        writetable(FishSummary,fullfile(cfg.ModelDataDir, ...
+            sprintf('%s_fish_summary_%s.csv',nameStem,P.morphName)));
+    end
+end
+end
+
+function [Fit,labels,ahs,info] = classifyPhaseAHVPooled(Fit,P,familyN)
+N=numel(Fit.b2);
+eligible=Fit.nFitSamples>=P.minSamplesForNeuronFit;
+validA=eligible & isfinite(Fit.a) & isfinite(Fit.pA);
+validB1=eligible & isfinite(Fit.b1) & isfinite(Fit.pB1);
+validB2=eligible & isfinite(Fit.b2) & isfinite(Fit.pB2);
+
+Fit.pAAdjusted=nan(N,1);
+Fit.pB1Adjusted=nan(N,1);
+Fit.pB2Adjusted=nan(N,1);
+if familyN.betaTheta>0
+    Fit.pAAdjusted(validA)=min(1,familyN.betaTheta.*Fit.pA(validA));
+end
+if familyN.b1>0
+    Fit.pB1Adjusted(validB1)=min(1,familyN.b1.*Fit.pB1(validB1));
+end
+Fit.pB2Adjusted(validB2)=min(1,familyN.b2.*Fit.pB2(validB2));
+
+labels=repmat({'NotFit'},N,1);
+[sharedLabels,sharedAdjusted]=hdahv.classifyB2(Fit.b2,Fit.pB2, ...
+    familyN.b2,P.class.alpha,P.ahvPositiveIsCCW,validB2);
+labels=cellstr(sharedLabels); Fit.pB2Adjusted=sharedAdjusted;
+
+ahs=repmat({'AHS_not_fit'},N,1);
+ahs(validB1)={'AHS_not_significant'};
+sigB1=validB1 & Fit.pB1Adjusted<P.class.alpha;
+ahs(sigB1 & Fit.b1>0)={'AHS_positive'};
+ahs(sigB1 & Fit.b1<0)={'AHS_negative'};
+
+info=struct('alpha',P.class.alpha, ...
+    'alphaBonferroni',safeBonferroniThreshold(P.class.alpha,familyN.b2), ...
+    'alphaThresholdBetaTheta',safeBonferroniThreshold(P.class.alpha,familyN.betaTheta), ...
+    'alphaThresholdB1',safeBonferroniThreshold(P.class.alpha,familyN.b1), ...
+    'alphaThresholdB2',safeBonferroniThreshold(P.class.alpha,familyN.b2), ...
+    'bonferroniMode','pooled_across_all_included_cells_and_morphs', ...
+    'nBonferroniTests',familyN.b2, ...
+    'nBonferroniTestsBetaTheta',familyN.betaTheta, ...
+    'nBonferroniTestsB1',familyN.b1, ...
+    'nBonferroniTestsB2',familyN.b2, ...
+    'nValidNeuronsThisFish',sum(validB2), ...
+    'adjustedPFormula','min(1,Nfamily*rawP)', ...
+    'classificationRule','Sign of b2 when pooled-Bonferroni pB2Adjusted < alpha', ...
+    'pValueCaveat',['Conventional OLS p-values do not correct for temporal ' ...
+    'autocorrelation; use continuous coefficients and blocked CV for primary inference.']);
+end
+
+function value = safeBonferroniThreshold(alpha,nTests)
+if nTests>0; value=alpha/nTests; else; value=NaN; end
+end
+
+function T = resultFitTableOrEmpty(R)
+if isstruct(R) && isfield(R,'fitTable') && istable(R.fitTable); T=R.fitTable;
+else; T=table(); end
+end
+
+function T = resultFishTableOrEmpty(R)
+if isstruct(R) && isfield(R,'fishSummary') && istable(R.fishSummary); T=R.fishSummary;
+else; T=table(); end
+end
+
+function writeNeuronScalarCSV(T,path)
+traceVariables=intersect({'cvObserved','cvPredPhaseOnly', ...
+    'cvPredBehavior','cvPredFull','cvPredOriginal', ...
+    'cvPredPhaseAHV','cvPredAHVOnly'},T.Properties.VariableNames,'stable');
+if ~isempty(traceVariables); T=removevars(T,traceVariables); end
+writetable(T,path);
+end
+
 function morphOutput = runOneMorph(P, modelDataDir, sessionDataDir, figureDir)
 %% ======================== DISCOVER / RUN ========================
 [sessions, P.rootDataDir] = discoverSessions(P.rootDataDir, P);
+
+nameStem = "HD_AHV_three_models_phase_tuned_only";
+resultFile = fullfile(modelDataDir, sprintf("%s_results_%s.mat",nameStem,P.morphName));
+cachedResults={}; cachedNames=strings(0,1);
+if isfile(resultFile)
+    Q=load(resultFile,"Results","P");
+    compatible=isfield(Q,"Results")&&iscell(Q.Results)&&isfield(Q,"P")&& ...
+        isfield(Q.P,"model")&&isfield(Q.P.model,"version")&&strcmp(Q.P.model.version,P.model.version)&& ...
+        isfield(Q.P.model,"zscoreActivityWithinFitWindow")&& ...
+        logical(Q.P.model.zscoreActivityWithinFitWindow)==logical(P.model.zscoreActivityWithinFitWindow);
+    if compatible
+        cachedResults=Q.Results; cachedNames=strings(numel(cachedResults),1);
+        for i=1:numel(cachedResults)
+            if isstruct(cachedResults{i})&&isfield(cachedResults{i},"name"), cachedNames(i)=string(cachedResults{i}.name); end
+        end
+    end
+end
 
 Results = cell(numel(sessions),1);
 allTables = cell(numel(sessions),1);
@@ -233,6 +398,15 @@ tuningFishRows = cell(numel(sessions),1);
 for s = 1:numel(sessions)
     fprintf('\n================ %s (%d/%d) ================\n', ...
         sessions(s).name, s, numel(sessions));
+    cachedIndex=find(cachedNames==string(sessions(s).name),1);
+    if ~isempty(cachedIndex)&&isReusableSessionResult(cachedResults{cachedIndex})
+        Results{s}=cachedResults{cachedIndex};
+        allTables{s}=Results{s}.fitTable; fishRows{s}=Results{s}.fishSummary;
+        allTuningTables{s}=Results{s}.tuningTable; tuningFishRows{s}=Results{s}.tuningSummary;
+        fprintf("Reusing successful cached session %s.\n",sessions(s).name);
+        continue
+    end
+    fprintf("Rerunning failed or missing session %s.\n",sessions(s).name);
     try
         Results{s} = analyzeOneSession(sessions(s), P, sessionDataDir, figureDir);
         allTables{s} = Results{s}.fitTable;
@@ -268,10 +442,6 @@ else
     TuningFishSummary = table();
 end
 
-nameStem = ['HD_AHV_behavior_augmented_phase_tuned_only_' ...
-    'with_phase_only'];
-resultFile = fullfile(modelDataDir, sprintf('%s_results_%s.mat', ...
-    nameStem, P.morphName));
 save(resultFile, ...
     'Results','AllNeurons','FishSummary','AllCandidateTuning', ...
     'TuningFishSummary','P','sessions','-v7.3');
@@ -280,7 +450,8 @@ if ~isempty(AllNeurons)
     % from the flat CSV, which is intended for scalar neuron summaries.
     AllNeuronsCSV = AllNeurons;
     traceVariables = intersect({'cvObserved','cvPredPhaseOnly', ...
-        'cvPredOriginal','cvPredBehavior','cvPredFull','cvPredAugmented'}, ...
+        'cvPredBehavior','cvPredFull','cvPredOriginal', ...
+        'cvPredPhaseAHV','cvPredAHVOnly'}, ...
         AllNeuronsCSV.Properties.VariableNames,'stable');
     if ~isempty(traceVariables)
         AllNeuronsCSV = removevars(AllNeuronsCSV,traceVariables);
@@ -297,13 +468,8 @@ if ~isempty(TuningFishSummary)
     writetable(TuningFishSummary,fullfile(modelDataDir, sprintf('HD_AHV_phase_tuning_fish_summary_%s.csv', P.morphName)));
 end
 
-if ~isempty(AllNeurons)
-    plotAllFishModelComparison(AllNeurons,P,figureDir);
-    plotAllFishCoefficientSummary(AllNeurons,P,figureDir);
-end
-if ~isempty(FishSummary)
-    plotFishLevelSummary(FishSummary,P,figureDir);
-end
+% The legacy comparison plots require reduced-model fits and are therefore
+% intentionally not generated by this single-model pipeline.
 
 morphOutput = struct('morph', P.morphDisplayName, ...
     'resultFile', resultFile, 'sessionDataDir', sessionDataDir, ...
@@ -314,6 +480,12 @@ fprintf('%s', newline);
 end
 
 %% ======================== LOCAL FUNCTIONS ========================
+
+function tf=isReusableSessionResult(R)
+tf=isstruct(R)&&~isfield(R,"error")&&isfield(R,"name")&& ...
+    isfield(R,"fitTable")&&istable(R.fitTable)&&isfield(R,"fishSummary")&&istable(R.fishSummary)&& ...
+    isfield(R,"tuningTable")&&istable(R.tuningTable)&&isfield(R,"tuningSummary")&&istable(R.tuningSummary);
+end
 
 function ensureDirectory(pathName)
 if exist(pathName, 'dir') ~= 7
@@ -329,6 +501,7 @@ end
 
 d = dir(rootDir);
 d = d([d.isdir] & ~ismember({d.name},{'.','..'}));
+d = d(startsWith(lower(string({d.name})), "rec"));
 if P.sessionDiscovery.includeRootAsSession
     rootEntry = struct('name',getFolderName(rootDir),'folder',fileparts(rootDir), ...
         'date','','bytes',0,'isdir',true,'datenum',0);
@@ -430,7 +603,7 @@ candidatePath = fullfile(sess.dataDir,sess.candidateFile);
 behaviorPath = fullfile(sess.dataDir,sess.behaviorFile);
 
 C = load(candidatePath);
-[Y,tCa,phase,phaseOk,sourcePrefRad,candidateIDs,loadDiag] = loadCandidate(C,P);
+[Y,tCa,phase,phaseOk,sourcePrefRad,candidateIDs,Harmonic,loadDiag] = loadCandidate(C,P);
 
 % Selection is run on every candidate cell and on the full candidate-file
 % time support, before behavior alignment or model fitting.
@@ -451,16 +624,28 @@ if isempty(tunedCandidateOrder)
         'excludedBecauseNoTunedCells',true, ...
         'paths',struct('candidatePath',candidatePath,'behaviorPath',behaviorPath), ...
         'candidateDiagnostics',loadDiag,'tuning',Tuning, ...
+        'tuningHarmonicDiagnostics',Harmonic, ...
         'tuningTable',tuningTable,'tuningSummary',tuningSummary, ...
         'fitTable',table(),'fishSummary',table());
-    save(fullfile(dataOutDir,[sess.name '_phase_tuned_only_with_phase_only_model.mat']), ...
+    save(fullfile(dataOutDir,[sess.name '_three_models_phase_tuned_only.mat']), ...
         'Result','P','-v7.3');
     return;
 end
 
 Y = Y(:,tunedCandidateOrder);
 sourcePrefRad = sourcePrefRad(tunedCandidateOrder);
+Harmonic = subsetHarmonicDiagnostics(Harmonic,tunedCandidateOrder);
 candidateIDs = candidateIDs(tunedCandidateOrder);
+assert(numel(sourcePrefRad)==numel(candidateIDs), ...
+    'Preferred-phase vector lost alignment with selected candidate IDs.');
+missingSourcePref = ~isfinite(sourcePrefRad);
+if any(missingSourcePref)
+    error(['First-circular-harmonic sourcePrefRad is missing or invalid for ' ...
+        'selected candidate ID(s): %s. No fallback preferred phase is allowed.'], ...
+        strjoin(compose('%.15g',candidateIDs(missingSourcePref)),', '));
+end
+assert(all(sourcePrefRad > -pi & sourcePrefRad <= pi), ...
+    'First-harmonic sourcePrefRad must always be in (-pi, pi].');
 
 S = load(behaviorPath,'pass2FileResult');
 assert(isfield(S,'pass2FileResult'),'Behavior file lacks pass2FileResult.');
@@ -475,35 +660,42 @@ if P.lowTurnQC.enabled && ...
         'excludedBecauseNoTunedCells',false, ...
         'paths',struct('candidatePath',candidatePath,'behaviorPath',behaviorPath), ...
         'behaviorDiagnostics',behaviorDiag,'candidateDiagnostics',loadDiag, ...
+        'tuningHarmonicDiagnostics',Harmonic, ...
         'tuning',Tuning,'tuningTable',tuningTable, ...
         'tuningSummary',tuningSummary,'fitTable',table(),'fishSummary',table());
-    save(fullfile(dataOutDir,[sess.name '_phase_tuned_only_with_phase_only_model.mat']), ...
+    save(fullfile(dataOutDir,[sess.name '_three_models_phase_tuned_only.mat']), ...
         'Result','P','-v7.3');
     return;
 end
 
-common = isfinite(tCa) & isfinite(phase) & isfinite(B.ahv) & ...
-         isfinite(B.forward) & isfinite(B.vigor);
+common = isfinite(tCa) & isfinite(phase) & isfinite(B.ahv);
 if P.useTimeOverlapOnly
     Y = Y(common,:); tUsed = tCa(common); phase = phase(common);
-    ahv = B.ahv(common); forward = B.forward(common); vigor = B.vigor(common);
+    ahv = B.ahv(common);
 else
-    tUsed = tCa; ahv = B.ahv; forward = B.forward; vigor = B.vigor;
+    tUsed = tCa; ahv = B.ahv;
 end
-assert(sum(all(isfinite([phase,ahv,forward,vigor]),2)) >= P.minSamplesForNeuronFit, ...
+assert(sum(all(isfinite([phase,ahv]),2)) >= P.minSamplesForNeuronFit, ...
     'Too few common finite samples after behavior alignment.');
 
-if P.model.zscoreActivityWithinFitWindow; Y = zscoreColumnsFinite(Y); end
+if P.model.zscoreActivityWithinFitWindow; Y = hdahv.preprocessActivity(Y,true); end
 
-predictors = [cos(phase),sin(phase),abs(ahv),ahv,forward,vigor];
-predictorNames = {'cosPhi','sinPhi','absAHV','AHV','forward','vigor'};
+% Fish-level diagnostics use the same fixed-preference phase regressor as
+% the neuron fits. Because preferred direction differs across cells, pool
+% all neuron-by-time design rows for these summary diagnostics.
+phaseFixed = cos(sourcePrefRad(:)' - phase(:));
+predictors = [phaseFixed(:),repmat(abs(ahv(:)),size(Y,2),1), ...
+    repmat(ahv(:),size(Y,2),1)];
+predictorNames = {'cosPreferredMinusPhi','absAHV','AHV'};
 [predictorCorr,predictorVIF,conditionNumberStandardized] = ...
     predictorDiagnostics(predictors);
 
-fprintf('Fitting phase-only, original, augmented and behavior-only models: %d neurons, %d frames.\n', ...
+fprintf('Fitting phase + AHV, AHV-only and phase-only models: %d neurons, %d frames.\n', ...
     size(Y,2),size(Y,1));
-Fit = fitAllNeurons(Y,phase,ahv,forward,vigor,sourcePrefRad,P);
-[classLabel,ahsLabel,classInfo] = classifyAugmented(Fit,P);
+Fit = fitAllNeurons(Y,phase,ahv,sourcePrefRad,P);
+% Classification is deliberately deferred until every fish and morph has
+% been fitted, so coefficient p-values can be corrected in pooled families.
+[classLabel,ahsLabel,classInfo] = makePendingClassification(Fit,P);
 
 N = size(Y,2);
 session = repmat({sess.name},N,1);
@@ -514,11 +706,25 @@ fitTable.phaseInfoShuffleP = Tuning.pShuffle(tunedCandidateOrder);
 fitTable.phaseInfoFDRQ = Tuning.qFDR(tunedCandidateOrder);
 fitTable.phaseTuningPrefRad = Tuning.prefRad(tunedCandidateOrder);
 fitTable.phaseTuningPrefDeg = rad2deg(Tuning.prefRad(tunedCandidateOrder));
+fitTable.sourcePrefRad = sourcePrefRad;
+fitTable.sourcePrefDeg = rad2deg(sourcePrefRad);
+fitTable.sourcePrefMethod = repmat( ...
+    {'first circular harmonic of stored tuning_curves_phi_all_cells'},N,1);
+fitTable.tuningHarmonicIntercept = Harmonic.intercept;
+fitTable.tuningHarmonicCosCoeff = Harmonic.cosCoeff;
+fitTable.tuningHarmonicSinCoeff = Harmonic.sinCoeff;
+fitTable.tuningHarmonicAmplitude = Harmonic.amplitude;
+fitTable.tuningHarmonicR2 = Harmonic.r2;
+fitTable.harmonicVsInternalPrefDifferenceRad = atan2( ...
+    sin(sourcePrefRad-fitTable.phaseTuningPrefRad), ...
+    cos(sourcePrefRad-fitTable.phaseTuningPrefRad));
+fitTable.harmonicVsInternalPrefDifferenceDeg = ...
+    rad2deg(fitTable.harmonicVsInternalPrefDifferenceRad);
 fitTable.phaseTuningVectorStrength = Tuning.vectorStrength(tunedCandidateOrder);
 fitTable.selectedByPhaseTuning = true(N,1);
 
 fishSummary = makeFishSummary(sess.name,fitTable,behaviorDiag, ...
-    predictorCorr,predictorVIF,conditionNumberStandardized);
+    predictorVIF,conditionNumberStandardized);
 fishSummary.nCandidatesPhaseTested = numel(allCandidateIDs);
 fishSummary.nPhaseTunedSelected = numel(tunedCandidateOrder);
 fishSummary.phaseTunedFraction = numel(tunedCandidateOrder)/numel(allCandidateIDs);
@@ -532,8 +738,6 @@ Result.paths = struct('candidatePath',candidatePath,'behaviorPath',behaviorPath)
 Result.tCa = tUsed;
 Result.phaseCa = phase;
 Result.ahvCa = ahv;
-Result.forwardCa = forward;
-Result.vigorCa = vigor;
 Result.predictorNames = predictorNames;
 Result.predictorCorrelation = predictorCorr;
 Result.predictorVIF = predictorVIF;
@@ -545,30 +749,29 @@ Result.tuningTable = tuningTable;
 Result.tuningSummary = tuningSummary;
 Result.tunedCandidateOrder = tunedCandidateOrder;
 Result.tunedCandidateIDs = candidateIDs;
+Result.tuningHarmonicDiagnostics = Harmonic;
 Result.fit = Fit;
 Result.classLabel = classLabel;
 Result.classInfo = classInfo;
 Result.fitTable = fitTable;
 Result.fishSummary = fishSummary;
 
-perFishFile = fullfile(dataOutDir,[sess.name '_phase_tuned_only_with_phase_only_model.mat']);
+perFishFile = fullfile(dataOutDir,[sess.name '_three_models_phase_tuned_only.mat']);
 save(perFishFile,'Result','P','-v7.3');
 plotRegressorQC(Result,P,figureOutDir);
 plotPredictorCorrelation(Result,P,figureOutDir);
-plotPerFishModelComparison(Result,P,figureOutDir);
 
-if P.classificationExport.enabled
-    exportClassifiedCandidate(candidatePath,behaviorPath,allCandidateIDs,tunedCandidateOrder, ...
-        classLabel,fitTable,classInfo,Tuning,P);
-end
 end
 
-function [Y,tCa,phase,phaseOk,sourcePrefRad,candidateIDs,D] = loadCandidate(C,P)
-required = {'calcium_traces','time_s','network_phase_rad','candidate_cell_ids'};
+function [Y,tCa,phase,phaseOk,sourcePrefRad,candidateIDs,H,D] = loadCandidate(C,P)
+required = {'calcium_traces','time_s','network_phase_rad','candidate_cell_ids', ...
+    'phi_bin_centers_rad','tuning_curves_phi_all_cells'};
 for k = 1:numel(required)
     assert(isfield(C,required{k}),'Candidate file missing %s.',required{k});
 end
 candidateIDs = double(C.candidate_cell_ids(:));
+assert(numel(unique(candidateIDs))==numel(candidateIDs), ...
+    'candidate_cell_ids must be unique within each candidate file.');
 Y0 = double(C.calcium_traces);
 if size(Y0,2)==numel(candidateIDs); Y=Y0;
 elseif size(Y0,1)==numel(candidateIDs); Y=Y0';
@@ -579,10 +782,17 @@ assert(numel(tCa)==size(Y,1) && numel(phase)==size(Y,1), ...
     'Candidate time/phase lengths do not match calcium traces.');
 assert(all(diff(tCa(isfinite(tCa)))>0),'time_s must increase strictly.');
 [phaseOk,phaseOkSource] = getPhaseOk(C,numel(phase),P);
-[sourcePrefRad,prefSource] = getSourcePreferredPhase(C,size(Y,2));
+[sourcePrefRad,H] = getTuningHarmonicPreferredPhase(C,candidateIDs);
+assert(numel(sourcePrefRad)==numel(candidateIDs) && ...
+    isequaln(H.candidateIDs,candidateIDs), ...
+    'First-harmonic preferred phases are not aligned with candidate_cell_ids.');
 D = struct('activitySource','calcium_traces','phaseSource','network_phase_rad', ...
     'phaseOkSource',phaseOkSource, ...
-    'referencePreferredPhaseSource',prefSource,'nFrames',size(Y,1), ...
+    'referencePreferredPhaseSource', ...
+    'first circular harmonic of tuning_curves_phi_all_cells', ...
+    'preferredPhaseMethod', ...
+    'atan2(sine coefficient, cosine coefficient) from stored tuning curve', ...
+    'nFrames',size(Y,1), ...
     'nNeurons',size(Y,2));
 end
 
@@ -820,36 +1030,79 @@ sortedQ = min(sortedQ,1);
 unsortedQ = nan(size(pv)); unsortedQ(order)=sortedQ; q(valid)=unsortedQ;
 end
 
-function [pref,source] = getSourcePreferredPhase(C,N)
-pref = NaN(N,1); source = 'unavailable';
-if isfield(C,'candidate_features') && istable(C.candidate_features)
-    vn = C.candidate_features.Properties.VariableNames;
-    radNames = {'prefRad','preferred_phase_rad','preferredPhaseRad','pref_phi_rad'};
-    degNames = {'prefDeg','preferred_phase_deg','preferredPhaseDeg','pref_phi_deg'};
-    for k=1:numel(radNames)
-        q=find(strcmpi(vn,radNames{k}),1);
-        if ~isempty(q) && height(C.candidate_features)==N
-            pref=wrapToPiLocal(double(C.candidate_features{:,q})); source=vn{q}; return;
-        end
+function [sourcePrefRad,H] = getTuningHarmonicPreferredPhase(C,candidateIDs)
+% Derive the sole model reference phase from each stored tuning curve.
+phiBins = double(C.phi_bin_centers_rad(:));
+Q = double(C.tuning_curves_phi_all_cells);
+candidateIDs = double(candidateIDs(:));
+nNeurons = numel(candidateIDs);
+
+% Convert to: rows = phase bins, columns = neurons.
+if size(Q,1) == numel(phiBins) && size(Q,2) == nNeurons
+    % Already correctly oriented.
+elseif size(Q,2) == numel(phiBins) && size(Q,1) == nNeurons
+    Q = Q';
+else
+    error(['tuning_curves_phi_all_cells dimensions [%d %d] are incompatible ' ...
+        'with %d phase bins and %d candidate neurons.'], ...
+        size(Q,1),size(Q,2),numel(phiBins),nNeurons);
+end
+
+X = [ones(numel(phiBins),1),cos(phiBins),sin(phiBins)];
+sourcePrefRad = nan(nNeurons,1);
+tuningHarmonicIntercept = nan(nNeurons,1);
+tuningHarmonicCosCoeff = nan(nNeurons,1);
+tuningHarmonicSinCoeff = nan(nNeurons,1);
+tuningAmplitude = nan(nNeurons,1);
+tuningHarmonicR2 = nan(nNeurons,1);
+
+for i = 1:nNeurons
+    q = Q(:,i);
+    valid = isfinite(phiBins) & isfinite(q);
+    if nnz(valid) < 3
+        continue;
     end
-    for k=1:numel(degNames)
-        q=find(strcmpi(vn,degNames{k}),1);
-        if ~isempty(q) && height(C.candidate_features)==N
-            pref=wrapToPiLocal(deg2rad(double(C.candidate_features{:,q}))); source=vn{q}; return;
-        end
+    beta = X(valid,:) \ q(valid);
+    tuningHarmonicIntercept(i) = beta(1);
+    tuningHarmonicCosCoeff(i) = beta(2);
+    tuningHarmonicSinCoeff(i) = beta(3);
+    sourcePrefRad(i) = atan2(beta(3),beta(2));
+    sourcePrefRad(i) = atan2(sin(sourcePrefRad(i)),cos(sourcePrefRad(i)));
+    % Enforce the requested half-open circular interval (-pi, pi].
+    if sourcePrefRad(i) <= -pi
+        sourcePrefRad(i) = pi;
+    end
+    tuningAmplitude(i) = hypot(beta(2),beta(3));
+    qhat = X(valid,:) * beta;
+    ssRes = sum((q(valid)-qhat).^2);
+    ssTot = sum((q(valid)-mean(q(valid))).^2);
+    if isfinite(ssTot) && ssTot > 0
+        tuningHarmonicR2(i) = 1-ssRes/ssTot;
     end
 end
-if isfield(C,'prefRad') && numel(C.prefRad)==N
-    pref=wrapToPiLocal(double(C.prefRad(:))); source='prefRad';
-elseif isfield(C,'prefDeg') && numel(C.prefDeg)==N
-    pref=wrapToPiLocal(deg2rad(double(C.prefDeg(:)))); source='prefDeg';
+
+finitePref = isfinite(sourcePrefRad);
+assert(all(sourcePrefRad(finitePref)>-pi & sourcePrefRad(finitePref)<=pi), ...
+    'First-harmonic sourcePrefRad escaped the required (-pi, pi] interval.');
+H = struct('candidateIDs',candidateIDs, ...
+    'intercept',tuningHarmonicIntercept, ...
+    'cosCoeff',tuningHarmonicCosCoeff, ...
+    'sinCoeff',tuningHarmonicSinCoeff, ...
+    'amplitude',tuningAmplitude,'r2',tuningHarmonicR2, ...
+    'method','first circular harmonic of stored tuning_curves_phi_all_cells');
+end
+
+function H = subsetHarmonicDiagnostics(H,tunedCandidateOrder)
+fields = {'candidateIDs','intercept','cosCoeff','sinCoeff','amplitude','r2'};
+for k = 1:numel(fields)
+    assert(numel(H.(fields{k})) >= max(tunedCandidateOrder), ...
+        'Harmonic diagnostic %s is not aligned with candidate order.',fields{k});
+    H.(fields{k}) = H.(fields{k})(tunedCandidateOrder);
 end
 end
 
 function [B,D] = buildBehaviorRegressors(beh,tCa,P)
-% Construct all motor predictors at behavior resolution before sampling at
-% calcium times. Event and continuous signals need different discrete
-% convolution scaling; see comments below.
+% Construct only the Mei-style AHV predictor at calcium resolution.
 assert(isfield(beh,'fps') && isfinite(double(beh.fps)) && double(beh.fps)>0, ...
     'Behavior fps is missing or invalid.');
 fps = double(beh.fps); fps = fps(1);
@@ -883,83 +1136,71 @@ end
 boutFrame = round(double(boutFrame(:)));
 validBout = isfinite(boutFrame) & boutFrame>=1 & boutFrame<=nBeh & isfinite(dtheta);
 
-% AHV impulses carry integrated angle (rad). Convolution with k(t), whose
-% units are 1/s, therefore produces rad/s; no 1/fps factor is applied.
-angleImpulse = accumarray(boutFrame(validBout),dtheta(validBout),[nBeh 1],@sum,0);
-kernelT = (0:round(P.kernel.cutoffTau*P.kernel.tauSeconds*fps))'./fps;
-kEvent = (1/P.kernel.tauSeconds).*exp(-kernelT/P.kernel.tauSeconds);
-ahvBeh = causalConvolutionFFT(angleImpulse,kEvent);
 
-% Determine forward bouts. This reproduces the behavioral summary's first
-% choice (LI_threshold), with an explicit angle fallback.
-[isForward,forwardDefinition] = identifyForwardBouts(beh,dtheta,nB,P);
-isForward = isForward(:) & validBout;
-[forwardWeight,forwardWeightSource,nMissingAmp] = ...
-    getForwardWeights(beh,isForward,nB,P);
-forwardImpulse = accumarray(boutFrame(isForward),forwardWeight(isForward), ...
-    [nBeh 1],@sum,0);
-forwardBeh = causalConvolutionFFT(forwardImpulse,kEvent);
+% Convert repository convention to Mei convention: positive = CCW.
+dthetaPaper = P.ahvNativeToPaperSign .* dtheta;
 
-% Vigor is a continuous signal. A Riemann-sum approximation to continuous
-% convolution requires k/fps. Median centering avoids a spurious startup
-% transient and redundancy with the intercept; it does not alter slopes in
-% a model with an intercept away from the boundary.
-if ~isfield(beh,'vigor') || isempty(beh.vigor)
-    if P.vigor.requireField; error('Behavior file lacks continuous vigor.');
-    else; vigorRaw=zeros(nBeh,1); vigorSource='zero fallback'; end
-else
-    vigorRaw=trimOrPad(double(beh.vigor(:)),nBeh);
-    vigorSource='pass2FileResult.vigor';
-end
-missingVigor = mean(~isfinite(vigorRaw));
-assert(missingVigor<=P.vigor.maximumMissingFraction, ...
-    'Vigor missing fraction %.3f exceeds configured maximum %.3f.', ...
-    missingVigor,P.vigor.maximumMissingFraction);
-vigorRaw = fillFiniteLinear(vigorRaw);
-if P.vigor.centerBeforeFiltering
-    vigorCenter=median(vigorRaw,'omitnan');
-    vigorForFilter=vigorRaw-vigorCenter;
-else
-    vigorCenter=0; vigorForFilter=vigorRaw;
-end
-vigorBeh = causalConvolutionFFT(vigorForFilter,kEvent./fps);
+% Match Mei's TURN_BIAS definition: forward/small bouts do not enter AHV.
+validAHVBout = validBout & ...
+    abs(dthetaPaper) > P.ahvMinAbsBoutAngleRad;
 
-% Sample every predictor at the exact calcium timestamps.
-B = struct();
-B.ahv = interp1(tBeh,ahvBeh,tCa(:),'linear',NaN);
-B.forward = interp1(tBeh,forwardBeh,tCa(:),'linear',NaN);
-B.vigor = interp1(tBeh,vigorBeh,tCa(:),'linear',NaN);
+boutRows = find(validAHVBout);
+boutTimes = tBeh(boutFrame(boutRows));
+
+% Map bout starts to their nearest imaging frames.
+assert(all(isfinite(tCa)) && all(diff(tCa)>0), ...
+    'Calcium timestamps must be finite and strictly increasing.');
+
+imagingIndex = round(interp1( ...
+    tCa(:),(1:numel(tCa))',boutTimes,'linear',NaN));
+
+keep = isfinite(imagingIndex) & ...
+    imagingIndex >= 1 & imagingIndex <= numel(tCa);
+
+angleImpulseCa = accumarray( ...
+    imagingIndex(keep), ...
+    dthetaPaper(boutRows(keep)), ...
+    [numel(tCa),1],@sum,0);
+
+% Three-second exponential kernel normalized to unit sum.
+dtCa = median(diff(tCa));
+kernelTime = (0:floor(P.kernel.ahvDurationSeconds/dtCa))' .* dtCa;
+
+kAHV = exp(-kernelTime/P.kernel.tauSeconds);
+kAHV = kAHV ./ sum(kAHV);
+
+assert(abs(sum(kAHV)-1) < 1e-12, ...
+    'Mei AHV kernel must sum to one.');
+
+ahvCa = causalConvolutionFFT(angleImpulseCa,kAHV);
+
+finiteBehTime = tBeh(isfinite(tBeh));
+inBehaviorSupport = tCa >= min(finiteBehTime) & ...
+    tCa <= max(finiteBehTime);
+ahvCa(~inBehaviorSupport) = NaN;
+
+B = struct('ahv',ahvCa);
 
 D = struct();
 D.fpsBehavior=fps; D.nBehaviorFrames=nBeh; D.nBouts=nB;
-D.nValidBouts=sum(validBout); D.nForwardBouts=sum(isForward);
-D.forwardBoutFraction=safeDivide(D.nForwardBouts,D.nValidBouts);
+D.nValidBouts=sum(validBout); D.nAHVBouts=sum(validAHVBout);
 D.dthetaSource=dthetaSource; D.behaviorTimeSource=timeSource;
-D.forwardDefinition=forwardDefinition;
-D.forwardWeightSource=forwardWeightSource;
-D.nForwardAmp70Replacements=nMissingAmp;
-D.vigorSource=vigorSource; D.vigorMissingFraction=missingVigor;
-D.vigorCenterBeforeFiltering=vigorCenter;
 D.kernelTauSeconds=P.kernel.tauSeconds;
-D.kernelCutoffTau=P.kernel.cutoffTau;
+D.kernelDurationSeconds=P.kernel.ahvDurationSeconds;
+D.turnBiasRad=P.ahvMinAbsBoutAngleRad;
 D.totalPositiveRotations=sum(max(dtheta(validBout),0),'omitnan')/(2*pi);
 D.totalNegativeRotations=sum(max(-dtheta(validBout),0),'omitnan')/(2*pi);
 D.minDirectionalRotations=min(D.totalPositiveRotations,D.totalNegativeRotations);
-D.ahvRangeBehavior=[min(ahvBeh) max(ahvBeh)];
-D.forwardRangeBehavior=[min(forwardBeh) max(forwardBeh)];
-D.vigorFilteredRangeBehavior=[min(vigorBeh) max(vigorBeh)];
+D.ahvRangeCalcium = [ ...
+    min(ahvCa,[],'omitnan'), ...
+    max(ahvCa,[],'omitnan')];
 D.nCalciumSamplesAHV=sum(isfinite(B.ahv));
-D.nCalciumSamplesForward=sum(isfinite(B.forward));
-D.nCalciumSamplesVigor=sum(isfinite(B.vigor));
 D.corrAbsAHV_AHV=safeCorr(abs(B.ahv),B.ahv);
-D.corrForwardVigor=safeCorr(B.forward,B.vigor);
-D.corrAbsAHVForward=safeCorr(abs(B.ahv),B.forward);
-D.corrAbsAHVVigor=safeCorr(abs(B.ahv),B.vigor);
 end
 
 function n = inferBehaviorLength(beh)
 n = NaN;
-priority={'vigor','heading_est','tail_angle'};
+priority={'behaviorTimeSec','heading_est','tail_angle'};
 for k=1:numel(priority)
     if isfield(beh,priority{k}) && ~isempty(beh.(priority{k}))
         n=numel(beh.(priority{k})); return;
@@ -1007,51 +1248,6 @@ end
 assert(numel(t)==n && all(diff(t(isfinite(t)))>0),'Invalid behavior time vector.');
 end
 
-function [isForward,source] = identifyForwardBouts(beh,dtheta,nB,P)
-isForward=false(nB,1); source='';
-if P.forward.useLIThresholdWhenAvailable && isfield(beh,'LI') && ...
-        numel(beh.LI)>=nB && isfield(beh,'LI_threshold') && ...
-        ~isempty(beh.LI_threshold) && isfinite(double(beh.LI_threshold(1)))
-    li=double(beh.LI(1:nB)); li=li(:);
-    thr=abs(double(beh.LI_threshold(1)));
-    isForward=isfinite(li) & abs(li)<=thr;
-    source=sprintf('|LI| <= LI_threshold (%.6g)',thr);
-else
-    thr=deg2rad(P.forward.fallbackAbsDthetaDeg);
-    isForward=isfinite(dtheta) & abs(dtheta)<=thr;
-    source=sprintf('|dtheta| <= %.3g deg fallback',P.forward.fallbackAbsDthetaDeg);
-end
-end
-
-function [w,source,nReplaced] = getForwardWeights(beh,isForward,nB,P)
-w=ones(nB,1); nReplaced=0;
-if ~P.forward.useAmp70Weights
-    source='unit event weights (configured)'; return;
-end
-if isfield(beh,'amp70') && ~isempty(beh.amp70)
-    amp=NaN(nB,1); m=min(nB,numel(beh.amp70));
-    amp(1:m)=double(beh.amp70(1:m));
-    finiteForward=isForward & isfinite(amp);
-    if any(finiteForward)
-        replacement=median(amp(finiteForward),'omitnan');
-        missing=isForward & ~isfinite(amp);
-        if any(missing)
-            assert(P.forward.replaceMissingAmp70WithMedian, ...
-                'Some forward bouts have missing amp70.');
-            amp(missing)=replacement; nReplaced=sum(missing);
-        end
-        w=amp; w(~isfinite(w))=1;
-        source='amp70 (missing forward values replaced by forward median)';
-        if nReplaced==0; source='amp70'; end
-        return;
-    end
-end
-assert(P.forward.allowUnitWeightFallback, ...
-    'amp70 unavailable for forward bouts and unit fallback is disabled.');
-w=ones(nB,1); source='unit event weights: amp70 unavailable';
-warning('amp70 unavailable for forward bouts; using unit event weights.');
-end
-
 function y = causalConvolutionFFT(x,k)
 x=double(x(:)); k=double(k(:));
 n=numel(x); m=numel(k); nFFT=2^nextpow2(n+m-1);
@@ -1073,21 +1269,6 @@ if nargin>1
 end
 end
 
-function x = trimOrPad(x,n)
-x=x(:);
-if numel(x)>n; x=x(1:n);
-elseif numel(x)<n; x(end+1:n,1)=NaN; end
-end
-
-function x = fillFiniteLinear(x)
-x=double(x(:)); ok=isfinite(x);
-assert(any(ok),'Continuous predictor has no finite values.');
-if all(ok); return; end
-idx=(1:numel(x))';
-if sum(ok)==1; x(~ok)=x(ok); return; end
-x(~ok)=interp1(idx(ok),x(ok),idx(~ok),'linear','extrap');
-end
-
 function [C,VIF,conditionZ] = predictorDiagnostics(X)
 ok=all(isfinite(X),2); X=X(ok,:);
 if size(X,1)<size(X,2)+2
@@ -1107,15 +1288,14 @@ for j=1:size(X,2)
 end
 end
 
-function Fit = fitAllNeurons(Y,phase,ahv,forward,vigor,sourcePrefRad,P)
-% Augmented predictor order: cosPhi, sinPhi, absAHV, AHV, F, V, intercept.
+function Fit = fitAllNeurons(Y,phase,ahv,sourcePrefRad,P)
+% Full predictor order: cos(sourcePrefRad-phi), absAHV, AHV, intercept.
 [~,N]=size(Y); nanN=NaN(N,1);
-fields={'a','d','b0','b1','b2','bF','bV','c0', ...
-    'seA','seD','seB0','sePrefRad','sePrefDeg','seB1','seB2','seBF','seBV','seC0', ...
-    'pA','pD','pB1','pB2','pBF','pBV','pC0','fHDJoint','pHDJoint', ...
-    'fAddedBehavior','pAddedBehavior','partialR2HD','partialR2AddedBehavior', ...
+fields={'a','d','b0','b1','b2','c0', ...
+    'seA','seD','seB0','sePrefRad','sePrefDeg','seB1','seB2','seC0', ...
+    'pA','pD','pB1','pB2','pC0','fHDJoint','pHDJoint','partialR2HD', ...
     'prefRad','prefDeg','prefShiftRad','prefShiftDeg', ...
-    'aStd','dStd','b0Std','b1Std','b2Std','bFStd','bVStd', ...
+    'aStd','dStd','b0Std','b1Std','b2Std', ...
     'epsilonStd','epsilonRMS','r2','adjR2','aic','bic', ...
     'phaseOnlyA','phaseOnlyD','phaseOnlyB0','phaseOnlyC0', ...
     'phaseOnlySeA','phaseOnlySeD','phaseOnlySeB0','phaseOnlySePrefRad','phaseOnlySePrefDeg', ...
@@ -1123,99 +1303,119 @@ fields={'a','d','b0','b1','b2','bF','bV','c0', ...
     'phaseOnlyPrefRad','phaseOnlyPrefDeg', ...
     'phaseOnlyAStd','phaseOnlyDStd','phaseOnlyB0Std', ...
     'phaseOnlyR2','phaseOnlyAdjR2','phaseOnlyAIC','phaseOnlyBIC', ...
-    'originalA','originalD','originalB0','originalB1','originalB2','originalC0', ...
-    'originalPrefRad','originalPrefDeg', ...
-    'originalAStd','originalDStd','originalB0Std','originalB1Std','originalB2Std', ...
-    'originalR2','originalAdjR2','originalAIC','originalBIC', ...
-    'behaviorB1','behaviorB2','behaviorBF','behaviorBV','behaviorC0', ...
-    'behaviorSeB1','behaviorSeB2','behaviorSeBF','behaviorSeBV','behaviorSeC0', ...
-    'behaviorPB1','behaviorPB2','behaviorPBF','behaviorPBV','behaviorPC0', ...
-    'behaviorB1Std','behaviorB2Std','behaviorBFStd','behaviorBVStd', ...
+    'behaviorB1','behaviorB2','behaviorC0', ...
+    'behaviorSeB1','behaviorSeB2','behaviorSeC0', ...
+    'behaviorPB1','behaviorPB2','behaviorPC0', ...
+    'behaviorB1Std','behaviorB2Std', ...
     'behaviorR2','behaviorAdjR2','behaviorAIC','behaviorBIC', ...
     'behaviorEpsilonStd','behaviorEpsilonRMS', ...
     'fAHVBeyondPhase','pAHVBeyondPhase','partialR2AHVBeyondPhase', ...
-    'fAllBehaviorBeyondPhase','pAllBehaviorBeyondPhase','partialR2AllBehaviorBeyondPhase', ...
-    'deltaB0FromControls','deltaB1FromControls','deltaB2FromControls', ...
-    'cvR2PhaseOnly','cvR2Original','cvR2Behavior','cvR2Full','cvR2Direct', ...
-    'cvUniquePhase','cvDeltaR2Phase','cvUniqueAddedBehavior', ...
-    'cvDeltaR2AddedBehavior','cvUniqueAHVBeyondPhase','cvDeltaR2AHVBeyondPhase', ...
-    'cvUniqueAllBehaviorBeyondPhase','cvDeltaR2AllBehaviorBeyondPhase', ...
-    'cvSSEPhaseOnly','cvSSEOriginal','cvSSEBehavior','cvSSEFull', ...
+    'cvR2PhaseOnly','cvR2Behavior','cvR2Full', ...
+    'cvUniquePhase','cvDeltaR2Phase','cvUniqueAHV','cvDeltaR2AHV', ...
+    'cvSSEPhaseOnly','cvSSEBehavior','cvSSEFull', ...
     'designRank','conditionNumberRaw','conditionNumberStandardized', ...
-    'vifCosPhi','vifSinPhi','vifAbsAHV','vifAHV','vifForward','vifVigor','maxVIF'};
+    'vifCosPhi','vifSinPhi','vifAbsAHV','vifAHV','maxVIF'};
 Fit=struct();
 for k=1:numel(fields); Fit.(fields{k})=nanN; end
-% Cell arrays are necessary because the number of usable held-out frames
-% can differ between neurons. single precision limits the MAT-file size.
 Fit.cvObserved=cell(N,1);
 Fit.cvPredPhaseOnly=cell(N,1);
-Fit.cvPredOriginal=cell(N,1);
 Fit.cvPredBehavior=cell(N,1);
 Fit.cvPredFull=cell(N,1);
 Fit.nFitSamples=zeros(N,1);
-Fit.modelFormula=['zActivity = a*cos(phi) + d*sin(phi) + b1*abs(AHV) + ' ...
-    'b2*AHV + bF*F + bV*V + c0 + epsilon'];
-Fit.coefficientOrder={'a','d','b1','b2','bF','bV','c0'};
-Fit.originalModelFormula=['zActivity = a*cos(phi) + d*sin(phi) + ' ...
-    'b1*abs(AHV) + b2*AHV + c0 + epsilon'];
-Fit.phaseOnlyModelFormula=['zActivity = a*cos(phi) + d*sin(phi) + ' ...
-    'c0 + epsilon'];
-Fit.phaseOnlyCoefficientOrder={'phaseOnlyA','phaseOnlyD','phaseOnlyC0'};
-Fit.behaviorModelFormula=['zActivity = b1*abs(AHV) + b2*AHV + ' ...
-    'bF*F + bV*V + c0 + epsilon'];
-Fit.behaviorCoefficientOrder={'behaviorB1','behaviorB2','behaviorBF', ...
-    'behaviorBV','behaviorC0'};
-Fit.augmentedModelFormula=Fit.modelFormula;
-Fit.augmentedCoefficientOrder=Fit.coefficientOrder;
+Fit.responseScale = ternaryActivityScale(P.model.zscoreActivityWithinFitWindow);
+Fit.modelFormula=[Fit.responseScale ' = betaTheta*cos(sourcePrefRad-phi) + ' ...
+    'b1*abs(AHV) + b2*AHV + c0 + epsilon; sourcePrefRad from first ' ...
+    'circular harmonic of stored tuning_curves_phi_all_cells'];
+Fit.preferredPhaseSource = ...
+    'first circular harmonic of stored tuning_curves_phi_all_cells';
+Fit.coefficientOrder={'betaTheta','b1','b2','c0'};
+Fit.phaseOnlyModelFormula=[Fit.responseScale ' = betaTheta*cos(sourcePrefRad-phi) + ' ...
+    'c0 + epsilon; sourcePrefRad from first circular harmonic of stored ' ...
+    'tuning_curves_phi_all_cells'];
+Fit.phaseOnlyCoefficientOrder={'phaseOnlyBetaTheta','phaseOnlyC0'};
+Fit.behaviorModelFormula=[Fit.responseScale ' = b1*abs(AHV) + b2*AHV + c0 + epsilon'];
+Fit.behaviorCoefficientOrder={'behaviorB1','behaviorB2','behaviorC0'};
 
-phase=phase(:); ahv=ahv(:); forward=forward(:); vigor=vigor(:);
-sourcePrefRad=sourcePrefRad(:);
-base=[cos(phase),sin(phase),abs(ahv),ahv,forward,vigor];
+phase=phase(:); ahv=ahv(:); sourcePrefRad=sourcePrefRad(:);
+sharedFull=hdahv.fitPhaseAHV(Y,phase,ahv,sourcePrefRad,P.minSamplesForNeuronFit);
 
 for i=1:N
     y=Y(:,i);
-    Xall=[base,ones(numel(y),1)];
+    if ~isfinite(sourcePrefRad(i)); continue; end
+    phaseRegressor=cos(sourcePrefRad(i)-phase);
+    Xall=[phaseRegressor,abs(ahv),ahv,ones(numel(y),1)];
     ok=all(isfinite(Xall),2) & isfinite(y);
     if sum(ok)<P.minSamplesForNeuronFit; continue; end
-    X=Xall(ok,:); yy=y(ok); n=size(X,1); kFull=size(X,2); dof=n-kFull;
-    if dof<=0; continue; end
-
-    beta=solveOLS(X,yy); pred=X*beta; resid=yy-pred;
+    Xfull=Xall(ok,:); yy=y(ok); n=size(Xfull,1);
+    Xphase=Xfull(:,[1 4]);
+    Xbehavior=Xfull(:,2:4);
+    kFull=size(Xfull,2); dofFull=n-kFull;
+    if dofFull<=0; continue; end
     yz=zscoreLocal(yy);
-    sseFull=sum(resid.^2); mse=sseFull/dof;
-    covBeta=mse*pinv(X'*X); se=sqrt(max(0,diag(covBeta)));
-    tStat=beta./se; p=2*(1-tcdf(abs(tStat),dof));
 
-    a=beta(1); d=beta(2); b0=hypot(a,d); pref=atan2(d,a);
+    % Model 1: phase + AHV.
+    beta=[sharedFull.betaTheta(i);sharedFull.b1(i);sharedFull.b2(i);sharedFull.c0(i)];
+    assert(all(isfinite(beta)),'Shared phase+AHV fit unexpectedly invalid.'); pred=Xfull*beta; resid=yy-pred;
+    sseFull=sum(resid.^2); mse=sseFull/dofFull;
+    se=[sharedFull.seBetaTheta(i);sharedFull.seB1(i);sharedFull.seB2(i);sharedFull.seC0(i)];
+    p=[sharedFull.pBetaTheta(i);sharedFull.pB1(i);sharedFull.pB2(i);sharedFull.pC0(i)];
+    a=beta(1); d=0; b0=abs(a); pref=sourcePrefRad(i);
     Fit.a(i)=a; Fit.d(i)=d; Fit.b0(i)=b0;
-    Fit.b1(i)=beta(3); Fit.b2(i)=beta(4); Fit.bF(i)=beta(5);
-    Fit.bV(i)=beta(6); Fit.c0(i)=beta(7);
-    Fit.seA(i)=se(1); Fit.seD(i)=se(2); Fit.seB1(i)=se(3);
-    Fit.seB2(i)=se(4); Fit.seBF(i)=se(5); Fit.seBV(i)=se(6); Fit.seC0(i)=se(7);
-    Fit.pA(i)=p(1); Fit.pD(i)=p(2); Fit.pB1(i)=p(3); Fit.pB2(i)=p(4);
-    Fit.pBF(i)=p(5); Fit.pBV(i)=p(6); Fit.pC0(i)=p(7);
+    Fit.b1(i)=beta(2); Fit.b2(i)=beta(3); Fit.c0(i)=beta(4);
+    Fit.seA(i)=se(1); Fit.seD(i)=0; Fit.seB1(i)=se(2);
+    Fit.seB2(i)=se(3); Fit.seC0(i)=se(4);
+    Fit.pA(i)=p(1); Fit.pD(i)=NaN; Fit.pB1(i)=p(2);
+    Fit.pB2(i)=p(3); Fit.pC0(i)=p(4);
     Fit.prefRad(i)=wrapToPiLocal(pref); Fit.prefDeg(i)=rad2deg(Fit.prefRad(i));
-    if isfinite(sourcePrefRad(i))
-        Fit.prefShiftRad(i)=wrapToPiLocal(pref-sourcePrefRad(i));
-        Fit.prefShiftDeg(i)=rad2deg(Fit.prefShiftRad(i));
-    end
-    if isfinite(b0) && b0>sqrt(eps)
-        covAD=covBeta(1:2,1:2);
-        gB=[a;d]/b0; gP=[-d;a]/(b0^2);
-        Fit.seB0(i)=sqrt(max(0,gB'*covAD*gB));
-        Fit.sePrefRad(i)=sqrt(max(0,gP'*covAD*gP));
-        Fit.sePrefDeg(i)=rad2deg(Fit.sePrefRad(i));
-    end
+    Fit.prefShiftRad(i)=0; Fit.prefShiftDeg(i)=0;
+    Fit.seB0(i)=se(1); Fit.sePrefRad(i)=0; Fit.sePrefDeg(i)=0;
+    Z=zscoreLocal(Xfull(:,1:3));
+    betaZ=solveOLS([Z,ones(n,1)],yz);
+    Fit.aStd(i)=betaZ(1); Fit.dStd(i)=0;
+    Fit.b0Std(i)=abs(betaZ(1));
+    Fit.b1Std(i)=betaZ(2); Fit.b2Std(i)=betaZ(3);
+    Fit.epsilonStd(i)=std(resid,0,'omitnan');
+    Fit.epsilonRMS(i)=sqrt(mean(resid.^2,'omitnan'));
+    Fit.r2(i)=localR2(yy,pred);
+    Fit.adjR2(i)=adjustedR2Local(Fit.r2(i),n,kFull);
+    [Fit.aic(i),Fit.bic(i)]=informationCriteriaLocal(sseFull,n,kFull);
 
-    % Behavior-only coefficients fitted on the identical samples. This is a
-    % complete saved fit, not merely an internal CV design matrix.
-    Xbehavior=X(:,3:7); % |AHV|, AHV, F, V, intercept
+    % Model 2: phase only, fitted on exactly the same samples.
+    betaP=solveOLS(Xphase,yy); predP=Xphase*betaP;
+    residP=yy-predP; ssePhase=sum(residP.^2);
+    kPhase=size(Xphase,2); dofPhase=n-kPhase;
+    Fit.phaseOnlyA(i)=betaP(1); Fit.phaseOnlyD(i)=0;
+    Fit.phaseOnlyB0(i)=abs(betaP(1));
+    Fit.phaseOnlyC0(i)=betaP(2);
+    Fit.phaseOnlyPrefRad(i)=wrapToPiLocal(sourcePrefRad(i));
+    Fit.phaseOnlyPrefDeg(i)=rad2deg(Fit.phaseOnlyPrefRad(i));
+    Fit.phaseOnlyR2(i)=localR2(yy,predP);
+    Fit.phaseOnlyAdjR2(i)=adjustedR2Local(Fit.phaseOnlyR2(i),n,kPhase);
+    [Fit.phaseOnlyAIC(i),Fit.phaseOnlyBIC(i)]= ...
+        informationCriteriaLocal(ssePhase,n,kPhase);
+    if dofPhase>0
+        mseP=ssePhase/dofPhase;
+        covBetaP=mseP*pinv(Xphase'*Xphase);
+        seP=sqrt(max(0,diag(covBetaP)));
+        tP=betaP./seP; pP=2*(1-tcdf(abs(tP),dofPhase));
+        Fit.phaseOnlySeA(i)=seP(1); Fit.phaseOnlySeD(i)=0;
+        Fit.phaseOnlyPA(i)=pP(1); Fit.phaseOnlyPD(i)=NaN;
+        Fit.phaseOnlySeB0(i)=seP(1);
+        Fit.phaseOnlySePrefRad(i)=0; Fit.phaseOnlySePrefDeg(i)=0;
+        [Fit.phaseOnlyFJoint(i),Fit.phaseOnlyPJoint(i),Fit.phaseOnlyPartialR2(i)] = ...
+            nestedFTest(yy,Xphase,ssePhase,dofPhase,ones(n,1));
+    end
+    ZP=zscoreLocal(Xphase(:,1));
+    betaPZ=solveOLS([ZP,ones(n,1)],yz);
+    Fit.phaseOnlyAStd(i)=betaPZ(1); Fit.phaseOnlyDStd(i)=0;
+    Fit.phaseOnlyB0Std(i)=abs(betaPZ(1));
+
+    % Model 3: AHV only, fitted on exactly the same samples.
     betaB=solveOLS(Xbehavior,yy); predB=Xbehavior*betaB;
     residB=yy-predB; sseBehavior=sum(residB.^2);
     kBehavior=size(Xbehavior,2); dofBehavior=n-kBehavior;
     Fit.behaviorB1(i)=betaB(1); Fit.behaviorB2(i)=betaB(2);
-    Fit.behaviorBF(i)=betaB(3); Fit.behaviorBV(i)=betaB(4);
-    Fit.behaviorC0(i)=betaB(5);
+    Fit.behaviorC0(i)=betaB(3);
     Fit.behaviorR2(i)=localR2(yy,predB);
     Fit.behaviorAdjR2(i)=adjustedR2Local(Fit.behaviorR2(i),n,kBehavior);
     [Fit.behaviorAIC(i),Fit.behaviorBIC(i)]= ...
@@ -1226,139 +1426,44 @@ for i=1:N
         mseB=sseBehavior/dofBehavior;
         covBetaB=mseB*pinv(Xbehavior'*Xbehavior);
         seB=sqrt(max(0,diag(covBetaB)));
-        tB=betaB./seB;
-        pB=2*(1-tcdf(abs(tB),dofBehavior));
+        tB=betaB./seB; pB=2*(1-tcdf(abs(tB),dofBehavior));
         Fit.behaviorSeB1(i)=seB(1); Fit.behaviorSeB2(i)=seB(2);
-        Fit.behaviorSeBF(i)=seB(3); Fit.behaviorSeBV(i)=seB(4);
-        Fit.behaviorSeC0(i)=seB(5);
+        Fit.behaviorSeC0(i)=seB(3);
         Fit.behaviorPB1(i)=pB(1); Fit.behaviorPB2(i)=pB(2);
-        Fit.behaviorPBF(i)=pB(3); Fit.behaviorPBV(i)=pB(4);
-        Fit.behaviorPC0(i)=pB(5);
+        Fit.behaviorPC0(i)=pB(3);
     end
-    ZB=zscoreLocal(Xbehavior(:,1:4));
+    ZB=zscoreLocal(Xbehavior(:,1:2));
     betaBZ=solveOLS([ZB,ones(n,1)],yz);
     Fit.behaviorB1Std(i)=betaBZ(1); Fit.behaviorB2Std(i)=betaBZ(2);
-    Fit.behaviorBFStd(i)=betaBZ(3); Fit.behaviorBVStd(i)=betaBZ(4);
 
-    % Nested in-sample phase test: augmented versus behavior-only model.
+    % Nested in-sample contributions of phase and AHV to the combined model.
     [Fit.fHDJoint(i),Fit.pHDJoint(i),Fit.partialR2HD(i)] = ...
-        nestedFTest(yy,X,sseFull,dof,Xbehavior);
-
-    % Added-behavior test: augmented versus the exactly matched original model.
-    Xoriginal=X(:,[1:4 7]);
-    [Fit.fAddedBehavior(i),Fit.pAddedBehavior(i),Fit.partialR2AddedBehavior(i)] = ...
-        nestedFTest(yy,X,sseFull,dof,Xoriginal);
-
-    % Standardized coefficients are diagnostics. b0/pref above always come
-    % from raw cos/sin coefficients so preferred phase remains well-defined.
-    Z=zscoreLocal(X(:,1:6));
-    betaZ=solveOLS([Z,ones(n,1)],yz);
-    Fit.aStd(i)=betaZ(1); Fit.dStd(i)=betaZ(2);
-    Fit.b0Std(i)=hypot(betaZ(1),betaZ(2));
-    Fit.b1Std(i)=betaZ(3); Fit.b2Std(i)=betaZ(4);
-    Fit.bFStd(i)=betaZ(5); Fit.bVStd(i)=betaZ(6);
-
-    % Phase-only coefficients fitted on the identical samples.
-    Xphase=X(:,[1 2 7]);
-    betaP=solveOLS(Xphase,yy); predP=Xphase*betaP;
-    residP=yy-predP; ssePhase=sum(residP.^2);
-    kPhase=size(Xphase,2); dofPhase=n-kPhase;
-    Fit.phaseOnlyA(i)=betaP(1); Fit.phaseOnlyD(i)=betaP(2);
-    Fit.phaseOnlyB0(i)=hypot(betaP(1),betaP(2));
-    Fit.phaseOnlyC0(i)=betaP(3);
-    Fit.phaseOnlyPrefRad(i)=wrapToPiLocal(atan2(betaP(2),betaP(1)));
-    Fit.phaseOnlyPrefDeg(i)=rad2deg(Fit.phaseOnlyPrefRad(i));
-    Fit.phaseOnlyR2(i)=localR2(yy,predP);
-    Fit.phaseOnlyAdjR2(i)=adjustedR2Local(Fit.phaseOnlyR2(i),n,kPhase);
-    [Fit.phaseOnlyAIC(i),Fit.phaseOnlyBIC(i)]= ...
-        informationCriteriaLocal(ssePhase,n,kPhase);
-    if dofPhase>0
-        mseP=ssePhase/dofPhase;
-        covBetaP=mseP*pinv(Xphase'*Xphase);
-        seP=sqrt(max(0,diag(covBetaP)));
-        tP=betaP./seP;
-        pP=2*(1-tcdf(abs(tP),dofPhase));
-        Fit.phaseOnlySeA(i)=seP(1); Fit.phaseOnlySeD(i)=seP(2);
-        Fit.phaseOnlyPA(i)=pP(1); Fit.phaseOnlyPD(i)=pP(2);
-        if Fit.phaseOnlyB0(i)>sqrt(eps)
-            covADP=covBetaP(1:2,1:2);
-            gBP=betaP(1:2)/Fit.phaseOnlyB0(i);
-            gPP=[-betaP(2);betaP(1)]/(Fit.phaseOnlyB0(i)^2);
-            Fit.phaseOnlySeB0(i)=sqrt(max(0,gBP'*covADP*gBP));
-            Fit.phaseOnlySePrefRad(i)=sqrt(max(0,gPP'*covADP*gPP));
-            Fit.phaseOnlySePrefDeg(i)=rad2deg(Fit.phaseOnlySePrefRad(i));
-        end
-        [Fit.phaseOnlyFJoint(i),Fit.phaseOnlyPJoint(i),Fit.phaseOnlyPartialR2(i)] = ...
-            nestedFTest(yy,Xphase,ssePhase,dofPhase,ones(n,1));
-    end
-    ZP=zscoreLocal(Xphase(:,1:2));
-    betaPZ=solveOLS([ZP,ones(n,1)],yz);
-    Fit.phaseOnlyAStd(i)=betaPZ(1); Fit.phaseOnlyDStd(i)=betaPZ(2);
-    Fit.phaseOnlyB0Std(i)=hypot(betaPZ(1),betaPZ(2));
-
-    % Original coefficients fitted on identical samples.
-    betaO=solveOLS(Xoriginal,yy); predO=Xoriginal*betaO;
-    residO=yy-predO; sseOriginal=sum(residO.^2);
-    dofOriginal=n-size(Xoriginal,2);
-    Fit.originalA(i)=betaO(1); Fit.originalD(i)=betaO(2);
-    Fit.originalB0(i)=hypot(betaO(1),betaO(2));
-    Fit.originalB1(i)=betaO(3); Fit.originalB2(i)=betaO(4); Fit.originalC0(i)=betaO(5);
-    Fit.originalPrefRad(i)=wrapToPiLocal(atan2(betaO(2),betaO(1)));
-    Fit.originalPrefDeg(i)=rad2deg(Fit.originalPrefRad(i));
-    Fit.originalR2(i)=localR2(yy,predO);
-    Fit.originalAdjR2(i)=adjustedR2Local(Fit.originalR2(i),n,size(Xoriginal,2));
-    [Fit.originalAIC(i),Fit.originalBIC(i)]= ...
-        informationCriteriaLocal(sseOriginal,n,size(Xoriginal,2));
-    ZO=zscoreLocal(Xoriginal(:,1:4));
-    betaOZ=solveOLS([ZO,ones(n,1)],yz);
-    Fit.originalAStd(i)=betaOZ(1); Fit.originalDStd(i)=betaOZ(2);
-    Fit.originalB0Std(i)=hypot(betaOZ(1),betaOZ(2));
-    Fit.originalB1Std(i)=betaOZ(3); Fit.originalB2Std(i)=betaOZ(4);
+        nestedFTest(yy,Xfull,sseFull,dofFull,Xbehavior);
     [Fit.fAHVBeyondPhase(i),Fit.pAHVBeyondPhase(i),Fit.partialR2AHVBeyondPhase(i)] = ...
-        nestedFTest(yy,Xoriginal,sseOriginal,dofOriginal,Xphase);
-    [Fit.fAllBehaviorBeyondPhase(i),Fit.pAllBehaviorBeyondPhase(i), ...
-        Fit.partialR2AllBehaviorBeyondPhase(i)] = ...
-        nestedFTest(yy,X,sseFull,dof,Xphase);
-    Fit.deltaB0FromControls(i)=Fit.b0(i)-Fit.originalB0(i);
-    Fit.deltaB1FromControls(i)=Fit.b1(i)-Fit.originalB1(i);
-    Fit.deltaB2FromControls(i)=Fit.b2(i)-Fit.originalB2(i);
+        nestedFTest(yy,Xfull,sseFull,dofFull,Xphase);
 
-    Fit.epsilonStd(i)=std(resid,0,'omitnan');
-    Fit.epsilonRMS(i)=sqrt(mean(resid.^2,'omitnan'));
-    Fit.r2(i)=localR2(yy,pred);
-    Fit.adjR2(i)=adjustedR2Local(Fit.r2(i),n,kFull);
-    [Fit.aic(i),Fit.bic(i)]=informationCriteriaLocal(sseFull,n,kFull);
-    Fit.designRank(i)=rank(X); Fit.conditionNumberRaw(i)=cond(X);
-    [~,vif,conditionZ]=predictorDiagnostics(X(:,1:6));
+    Fit.designRank(i)=rank(Xfull); Fit.conditionNumberRaw(i)=cond(Xfull);
+    [~,vif,conditionZ]=predictorDiagnostics(Xfull(:,1:3));
     Fit.conditionNumberStandardized(i)=conditionZ;
-    Fit.vifCosPhi(i)=vif(1); Fit.vifSinPhi(i)=vif(2);
-    Fit.vifAbsAHV(i)=vif(3); Fit.vifAHV(i)=vif(4);
-    Fit.vifForward(i)=vif(5); Fit.vifVigor(i)=vif(6);
+    Fit.vifCosPhi(i)=vif(1); Fit.vifSinPhi(i)=NaN;
+    Fit.vifAbsAHV(i)=vif(2); Fit.vifAHV(i)=vif(3);
     Fit.maxVIF(i)=max(vif,[],'omitnan'); Fit.nFitSamples(i)=n;
 
     if P.cv.enabled
-        CV=blockedCrossValidation(yy,Xphase,Xoriginal,Xbehavior,X,P);
+        CV=blockedCrossValidation(yy,Xphase,Xbehavior,Xfull,P);
         Fit.cvR2PhaseOnly(i)=CV.r2PhaseOnly;
-        Fit.cvR2Original(i)=CV.r2Original;
         Fit.cvR2Behavior(i)=CV.r2Behavior;
         Fit.cvR2Full(i)=CV.r2Full;
-        Fit.cvR2Direct(i)=CV.r2Full; % compatibility alias; this is augmented full
         Fit.cvSSEPhaseOnly(i)=CV.ssePhaseOnly;
-        Fit.cvSSEOriginal(i)=CV.sseOriginal;
         Fit.cvSSEBehavior(i)=CV.sseBehavior;
         Fit.cvSSEFull(i)=CV.sseFull;
         Fit.cvUniquePhase(i)=safeOneMinusRatio(CV.sseFull,CV.sseBehavior);
         Fit.cvDeltaR2Phase(i)=CV.r2Full-CV.r2Behavior;
-        Fit.cvUniqueAddedBehavior(i)=safeOneMinusRatio(CV.sseFull,CV.sseOriginal);
-        Fit.cvDeltaR2AddedBehavior(i)=CV.r2Full-CV.r2Original;
-        Fit.cvUniqueAHVBeyondPhase(i)=safeOneMinusRatio(CV.sseOriginal,CV.ssePhaseOnly);
-        Fit.cvDeltaR2AHVBeyondPhase(i)=CV.r2Original-CV.r2PhaseOnly;
-        Fit.cvUniqueAllBehaviorBeyondPhase(i)=safeOneMinusRatio(CV.sseFull,CV.ssePhaseOnly);
-        Fit.cvDeltaR2AllBehaviorBeyondPhase(i)=CV.r2Full-CV.r2PhaseOnly;
+        Fit.cvUniqueAHV(i)=safeOneMinusRatio(CV.sseFull,CV.ssePhaseOnly);
+        Fit.cvDeltaR2AHV(i)=CV.r2Full-CV.r2PhaseOnly;
         if P.cv.saveOOFTraces
             Fit.cvObserved{i}=single(CV.observed);
             Fit.cvPredPhaseOnly{i}=single(CV.predPhaseOnly);
-            Fit.cvPredOriginal{i}=single(CV.predOriginal);
             Fit.cvPredBehavior{i}=single(CV.predBehavior);
             Fit.cvPredFull{i}=single(CV.predFull);
         end
@@ -1377,39 +1482,35 @@ if q>0 && dofFull>0 && sseFull>0 && sseR>=sseFull-1e-10
 end
 end
 
-function CV = blockedCrossValidation(y,Xphase,Xoriginal,Xbehavior,Xfull,P)
+function CV = blockedCrossValidation(y,Xphase,Xbehavior,Xfull,P)
 n=numel(y); nFolds=min(P.cv.nBlockedFolds,floor(n/P.cv.minTestSamplesPerFold));
-CV=struct('r2PhaseOnly',NaN,'r2Original',NaN,'r2Behavior',NaN,'r2Full',NaN, ...
-    'ssePhaseOnly',NaN,'sseOriginal',NaN,'sseBehavior',NaN,'sseFull',NaN, ...
-    'observed',[],'predPhaseOnly',[],'predOriginal',[], ...
-    'predBehavior',[],'predFull',[]);
+CV=struct('r2PhaseOnly',NaN,'r2Behavior',NaN,'r2Full',NaN, ...
+    'ssePhaseOnly',NaN,'sseBehavior',NaN,'sseFull',NaN, ...
+    'observed',[],'predPhaseOnly',[],'predBehavior',[],'predFull',[]);
 if nFolds<2; return; end
 edges=round(linspace(0,n,nFolds+1));
-pP=NaN(n,1); pO=NaN(n,1); pB=NaN(n,1); pF=NaN(n,1);
+pP=NaN(n,1); pB=NaN(n,1); pF=NaN(n,1);
 for f=1:nFolds
     test=(edges(f)+1):edges(f+1); train=true(n,1); train(test)=false;
     if numel(test)<P.cv.minTestSamplesPerFold || sum(train)<=size(Xfull,2); continue; end
     pP(test)=Xphase(test,:)*solveOLS(Xphase(train,:),y(train));
-    pO(test)=Xoriginal(test,:)*solveOLS(Xoriginal(train,:),y(train));
     pB(test)=Xbehavior(test,:)*solveOLS(Xbehavior(train,:),y(train));
     pF(test)=Xfull(test,:)*solveOLS(Xfull(train,:),y(train));
 end
-valid=isfinite(y) & isfinite(pP) & isfinite(pO) & isfinite(pB) & isfinite(pF);
+valid=isfinite(y) & isfinite(pP) & isfinite(pB) & isfinite(pF);
 if sum(valid)<P.minSamplesForNeuronFit; return; end
-yy=y(valid); pP=pP(valid); pO=pO(valid); pB=pB(valid); pF=pF(valid);
+yy=y(valid); pP=pP(valid); pB=pB(valid); pF=pF(valid);
 % Preserve only the common, aligned OOF support. These are the same samples
-% used below for all four CV-R2 values and therefore permit paired ROC/AUC.
+% used below for all three CV-R2 values and therefore permit paired ROC/AUC.
 CV.observed=yy;
 CV.predPhaseOnly=pP;
-CV.predOriginal=pO;
 CV.predBehavior=pB;
 CV.predFull=pF;
-CV.ssePhaseOnly=sum((yy-pP).^2); CV.sseOriginal=sum((yy-pO).^2);
+CV.ssePhaseOnly=sum((yy-pP).^2);
 CV.sseBehavior=sum((yy-pB).^2); CV.sseFull=sum((yy-pF).^2);
 sst=sum((yy-mean(yy)).^2);
 if sst>0
     CV.r2PhaseOnly=1-CV.ssePhaseOnly/sst;
-    CV.r2Original=1-CV.sseOriginal/sst;
     CV.r2Behavior=1-CV.sseBehavior/sst;
     CV.r2Full=1-CV.sseFull/sst;
 end
@@ -1424,32 +1525,19 @@ if isfinite(numer) && isfinite(denom) && denom>0; value=1-numer/denom;
 else; value=NaN; end
 end
 
-function [labels,ahs,info] = classifyAugmented(Fit,P)
-N=numel(Fit.b2); labels=repmat({'NotFit'},N,1); ahs=repmat({'AHS_not_fit'},N,1);
-valid=isfinite(Fit.b2) & isfinite(Fit.pB2) & Fit.nFitSamples>=P.minSamplesForNeuronFit;
-nValid=sum(valid);
-switch lower(P.class.bonferroniMode)
-    case 'per_fish'; nTests=max(1,nValid);
-    case 'fixed'
-        nTests=round(P.class.fixedNTests);
-        assert(nTests>=nValid,['P.class.fixedNTests=%d is smaller than %d valid neurons. ' ...
-            'Use the common maximum candidate count.'],nTests,nValid);
-    otherwise; error('Unknown Bonferroni mode.');
-end
-thr=P.class.alpha/nTests; sig=valid & Fit.pB2<thr;
-labels(valid & ~sig)={'Symmetric'};
-if P.ahvPositiveIsCCW
-    labels(sig & Fit.b2>0)={'CCW'}; labels(sig & Fit.b2<0)={'CW'};
-else
-    labels(sig & Fit.b2>0)={'CW'}; labels(sig & Fit.b2<0)={'CCW'};
-end
-sigA=valid & isfinite(Fit.pB1) & Fit.pB1<thr;
-ahs(valid & ~sigA)={'AHS_not_significant'};
-ahs(sigA & Fit.b1>0)={'AHS_positive'}; ahs(sigA & Fit.b1<0)={'AHS_negative'};
-info=struct('alpha',P.class.alpha,'alphaBonferroni',thr, ...
-    'bonferroniMode',P.class.bonferroniMode,'nBonferroniTests',nTests, ...
-    'nValidNeuronsThisFish',nValid, ...
-    'classificationRule','Sign/significance of augmented-model b2', ...
+function [labels,ahs,info] = makePendingClassification(Fit,P)
+N=numel(Fit.b2);
+labels=repmat({'PendingPooledBonferroni'},N,1);
+ahs=repmat({'AHS_pending_pooled_Bonferroni'},N,1);
+valid=isfinite(Fit.b2) & isfinite(Fit.pB2) & ...
+    Fit.nFitSamples>=P.minSamplesForNeuronFit;
+labels(~valid)={'NotFit'};
+ahs(~valid)={'AHS_not_fit'};
+info=struct('alpha',P.class.alpha,'alphaBonferroni',NaN, ...
+    'bonferroniMode','pending_pooled_across_all_included_cells', ...
+    'nBonferroniTests',NaN,'nValidNeuronsThisFish',sum(valid), ...
+    'classificationRule',['Pending: sign of b2 after pooled Bonferroni ' ...
+    'correction across all included cells and morphs'], ...
     'pValueCaveat',['Conventional OLS p-values do not correct for temporal ' ...
     'autocorrelation; use continuous coefficients and blocked CV for primary inference.']);
 end
@@ -1458,12 +1546,11 @@ function T = makeFitTable(session,candidateOrder,neuronID,F,classLabel,ahsLabel,
 N=numel(neuronID);
 T=table(session,candidateOrder,neuronID(:), ...
     F.prefRad,F.prefDeg,F.prefShiftRad,F.prefShiftDeg, ...
-    F.a,F.d,F.b0,F.b1,F.b2,F.bF,F.bV,F.c0, ...
-    F.seA,F.seD,F.seB0,F.sePrefRad,F.sePrefDeg,F.seB1,F.seB2,F.seBF,F.seBV,F.seC0, ...
-    F.pA,F.pD,F.pHDJoint,F.fHDJoint,F.pB1,F.pB2,F.pBF,F.pBV,F.pC0, ...
-    F.pAddedBehavior,F.fAddedBehavior, ...
-    F.aStd,F.dStd,F.b0Std,F.b1Std,F.b2Std,F.bFStd,F.bVStd, ...
-    F.partialR2HD,F.partialR2AddedBehavior,F.r2,F.adjR2,F.aic,F.bic, ...
+    F.a,F.d,F.b0,F.b1,F.b2,F.c0, ...
+    F.seA,F.seD,F.seB0,F.sePrefRad,F.sePrefDeg,F.seB1,F.seB2,F.seC0, ...
+    F.pA,F.pD,F.pHDJoint,F.fHDJoint,F.pB1,F.pB2,F.pC0, ...
+    F.aStd,F.dStd,F.b0Std,F.b1Std,F.b2Std, ...
+    F.partialR2HD,F.r2,F.adjR2,F.aic,F.bic, ...
     F.phaseOnlyA,F.phaseOnlyD,F.phaseOnlyB0,F.phaseOnlyC0, ...
     F.phaseOnlySeA,F.phaseOnlySeD,F.phaseOnlySeB0, ...
     F.phaseOnlySePrefRad,F.phaseOnlySePrefDeg, ...
@@ -1471,35 +1558,26 @@ T=table(session,candidateOrder,neuronID(:), ...
     F.phaseOnlyPrefRad,F.phaseOnlyPrefDeg, ...
     F.phaseOnlyAStd,F.phaseOnlyDStd,F.phaseOnlyB0Std, ...
     F.phaseOnlyR2,F.phaseOnlyAdjR2,F.phaseOnlyAIC,F.phaseOnlyBIC, ...
-    F.originalA,F.originalD,F.originalB0,F.originalB1,F.originalB2,F.originalC0, ...
-    F.originalPrefRad,F.originalPrefDeg, ...
-    F.originalAStd,F.originalDStd,F.originalB0Std,F.originalB1Std,F.originalB2Std, ...
-    F.originalR2,F.originalAdjR2,F.originalAIC,F.originalBIC, ...
-    F.behaviorB1,F.behaviorB2,F.behaviorBF,F.behaviorBV,F.behaviorC0, ...
-    F.behaviorSeB1,F.behaviorSeB2,F.behaviorSeBF,F.behaviorSeBV,F.behaviorSeC0, ...
-    F.behaviorPB1,F.behaviorPB2,F.behaviorPBF,F.behaviorPBV,F.behaviorPC0, ...
-    F.behaviorB1Std,F.behaviorB2Std,F.behaviorBFStd,F.behaviorBVStd, ...
+    F.behaviorB1,F.behaviorB2,F.behaviorC0, ...
+    F.behaviorSeB1,F.behaviorSeB2,F.behaviorSeC0, ...
+    F.behaviorPB1,F.behaviorPB2,F.behaviorPC0, ...
+    F.behaviorB1Std,F.behaviorB2Std, ...
     F.behaviorR2,F.behaviorAdjR2,F.behaviorAIC,F.behaviorBIC, ...
     F.behaviorEpsilonStd,F.behaviorEpsilonRMS, ...
     F.fAHVBeyondPhase,F.pAHVBeyondPhase,F.partialR2AHVBeyondPhase, ...
-    F.fAllBehaviorBeyondPhase,F.pAllBehaviorBeyondPhase,F.partialR2AllBehaviorBeyondPhase, ...
-    F.deltaB0FromControls,F.deltaB1FromControls,F.deltaB2FromControls, ...
-    F.cvR2PhaseOnly,F.cvR2Original,F.cvR2Behavior,F.cvR2Full,F.cvR2Direct, ...
-    F.cvUniquePhase,F.cvDeltaR2Phase,F.cvUniqueAddedBehavior,F.cvDeltaR2AddedBehavior, ...
-    F.cvUniqueAHVBeyondPhase,F.cvDeltaR2AHVBeyondPhase, ...
-    F.cvUniqueAllBehaviorBeyondPhase,F.cvDeltaR2AllBehaviorBeyondPhase, ...
-    F.cvSSEPhaseOnly,F.cvSSEOriginal,F.cvSSEBehavior,F.cvSSEFull, ...
+    F.cvR2PhaseOnly,F.cvR2Behavior,F.cvR2Full, ...
+    F.cvUniquePhase,F.cvDeltaR2Phase,F.cvUniqueAHV,F.cvDeltaR2AHV, ...
+    F.cvSSEPhaseOnly,F.cvSSEBehavior,F.cvSSEFull, ...
     F.epsilonStd,F.epsilonRMS,F.designRank,F.conditionNumberRaw, ...
     F.conditionNumberStandardized,F.vifCosPhi,F.vifSinPhi,F.vifAbsAHV,F.vifAHV, ...
-    F.vifForward,F.vifVigor,F.maxVIF,F.nFitSamples,classLabel(:),ahsLabel(:), ...
+    F.maxVIF,F.nFitSamples,classLabel(:),ahsLabel(:), ...
     'VariableNames',{'session','candidateOrder','neuronID', ...
     'prefRad','prefDeg','prefShiftRad','prefShiftDeg', ...
-    'a','d','b0','b1','b2','bF','bV','c0', ...
-    'seA','seD','seB0','sePrefRad','sePrefDeg','seB1','seB2','seBF','seBV','seC0', ...
-    'pA','pD','pHDJoint','fHDJoint','pB1','pB2','pBF','pBV','pC0', ...
-    'pAddedBehavior','fAddedBehavior', ...
-    'a_std','d_std','b0_std','b1_std','b2_std','bF_std','bV_std', ...
-    'partialR2HD','partialR2AddedBehavior','r2','adjR2','AIC','BIC', ...
+    'a','d','b0','b1','b2','c0', ...
+    'seA','seD','seB0','sePrefRad','sePrefDeg','seB1','seB2','seC0', ...
+    'pA','pD','pHDJoint','fHDJoint','pB1','pB2','pC0', ...
+    'a_std','d_std','b0_std','b1_std','b2_std', ...
+    'partialR2HD','r2','adjR2','AIC','BIC', ...
     'phaseOnlyA','phaseOnlyD','phaseOnlyB0','phaseOnlyC0', ...
     'phaseOnlySeA','phaseOnlySeD','phaseOnlySeB0', ...
     'phaseOnlySePrefRad','phaseOnlySePrefDeg', ...
@@ -1507,141 +1585,137 @@ T=table(session,candidateOrder,neuronID(:), ...
     'phaseOnlyPrefRad','phaseOnlyPrefDeg', ...
     'phaseOnlyA_std','phaseOnlyD_std','phaseOnlyB0_std', ...
     'phaseOnlyR2','phaseOnlyAdjR2','phaseOnlyAIC','phaseOnlyBIC', ...
-    'originalA','originalD','originalB0','originalB1','originalB2','originalC0', ...
-    'originalPrefRad','originalPrefDeg', ...
-    'originalA_std','originalD_std','originalB0_std','originalB1_std','originalB2_std', ...
-    'originalR2','originalAdjR2','originalAIC','originalBIC', ...
-    'behaviorB1','behaviorB2','behaviorBF','behaviorBV','behaviorC0', ...
-    'behaviorSeB1','behaviorSeB2','behaviorSeBF','behaviorSeBV','behaviorSeC0', ...
-    'behaviorPB1','behaviorPB2','behaviorPBF','behaviorPBV','behaviorPC0', ...
-    'behaviorB1_std','behaviorB2_std','behaviorBF_std','behaviorBV_std', ...
+    'behaviorB1','behaviorB2','behaviorC0', ...
+    'behaviorSeB1','behaviorSeB2','behaviorSeC0', ...
+    'behaviorPB1','behaviorPB2','behaviorPC0', ...
+    'behaviorB1_std','behaviorB2_std', ...
     'behaviorR2','behaviorAdjR2','behaviorAIC','behaviorBIC', ...
     'behaviorEpsilonStd','behaviorEpsilonRMS', ...
     'fAHVBeyondPhase','pAHVBeyondPhase','partialR2AHVBeyondPhase', ...
-    'fAllBehaviorBeyondPhase','pAllBehaviorBeyondPhase','partialR2AllBehaviorBeyondPhase', ...
-    'deltaB0FromControls','deltaB1FromControls','deltaB2FromControls', ...
-    'cvR2PhaseOnly','cvR2Original','cvR2Behavior','cvR2Full','cvR2Direct', ...
-    'cvUniquePhase','cvDeltaR2Phase','cvUniqueAddedBehavior','cvDeltaR2AddedBehavior', ...
-    'cvUniqueAHVBeyondPhase','cvDeltaR2AHVBeyondPhase', ...
-    'cvUniqueAllBehaviorBeyondPhase','cvDeltaR2AllBehaviorBeyondPhase', ...
-    'cvSSEPhaseOnly','cvSSEOriginal','cvSSEBehavior','cvSSEFull', ...
+    'cvR2PhaseOnly','cvR2Behavior','cvR2Full', ...
+    'cvUniquePhase','cvDeltaR2Phase','cvUniqueAHV','cvDeltaR2AHV', ...
+    'cvSSEPhaseOnly','cvSSEBehavior','cvSSEFull', ...
     'epsilonStd','epsilonRMS','designRank','conditionNumberRaw', ...
     'conditionNumberStandardized','vifCosPhi','vifSinPhi','vifAbsAHV','vifAHV', ...
-    'vifForward','vifVigor','maxVIF','nFitSamples','class','ahsLabel'});
+    'maxVIF','nFitSamples','class','ahsLabel'});
 
 T.pThresholdAHV=repmat(info.alphaBonferroni,N,1);
 T.bonferroniNTests=repmat(info.nBonferroniTests,N,1);
 T.nValidNeuronsThisFish=repmat(info.nValidNeuronsThisFish,N,1);
 T.fishVIFCosPhi=repmat(fishVIF(1),N,1);
-T.fishVIFSinPhi=repmat(fishVIF(2),N,1);
-T.fishVIFAbsAHV=repmat(fishVIF(3),N,1);
-T.fishVIFAHV=repmat(fishVIF(4),N,1);
-T.fishVIFForward=repmat(fishVIF(5),N,1);
-T.fishVIFVigor=repmat(fishVIF(6),N,1);
+T.fishVIFSinPhi=nan(N,1);
+T.fishVIFAbsAHV=repmat(fishVIF(2),N,1);
+T.fishVIFAHV=repmat(fishVIF(3),N,1);
 T.fishConditionNumberStandardized=repmat(fishConditionZ,N,1);
-% Exact names expected by compare_HD_AHV_models_across_morphs_updated.m.
+% Explicit fixed-preference names; legacy a/d/b0 columns are retained.
+T.sourcePrefRad=T.prefRad;
+T.sourcePrefDeg=T.prefDeg;
+T.betaTheta=T.a;
+T.seBetaTheta=T.seA;
+T.pBetaTheta=T.pA;
+T.betaTheta_std=T.a_std;
 % Each table row contains one numeric column vector of aligned OOF samples.
 T.cvObserved=F.cvObserved;
 T.cvPredPhaseOnly=F.cvPredPhaseOnly;
-T.cvPredOriginal=F.cvPredOriginal;
 T.cvPredBehavior=F.cvPredBehavior;
 T.cvPredFull=F.cvPredFull;
-% Explicit augmented aliases improve readability while the *Full names are
-% retained for compatibility with the existing cross-morph analysis.
-T.augmentedR2=T.r2;
-T.augmentedAdjR2=T.adjR2;
-T.augmentedAIC=T.AIC;
-T.augmentedBIC=T.BIC;
-T.cvR2Augmented=T.cvR2Full;
-T.cvSSEAugmented=T.cvSSEFull;
-T.cvPredAugmented=F.cvPredFull;
+% Explicit aliases make the three model identities unambiguous downstream.
+T.phaseAHVR2=T.r2;
+T.phaseAHVAdjR2=T.adjR2;
+T.phaseAHVAIC=T.AIC;
+T.phaseAHVBIC=T.BIC;
+T.cvR2PhaseAHV=T.cvR2Full;
+T.cvSSEPhaseAHV=T.cvSSEFull;
+T.cvPredPhaseAHV=F.cvPredFull;
+T.ahvOnlyR2=T.behaviorR2;
+T.ahvOnlyAdjR2=T.behaviorAdjR2;
+T.cvR2AHVOnly=T.cvR2Behavior;
+T.cvSSEAHVOnly=T.cvSSEBehavior;
+T.cvPredAHVOnly=F.cvPredBehavior;
+T.cvUniqueAHVBeyondPhase=T.cvUniqueAHV;
+T.cvDeltaR2AHVBeyondPhase=T.cvDeltaR2AHV;
+% Backward-compatible aliases for scripts that call phase+AHV "original".
+T.originalA=T.a;
+T.originalD=T.d;
+T.originalB0=T.b0;
+T.originalB1=T.b1;
+T.originalB2=T.b2;
+T.originalC0=T.c0;
+T.originalPrefRad=T.prefRad;
+T.originalPrefDeg=T.prefDeg;
+T.originalA_std=T.a_std;
+T.originalD_std=T.d_std;
+T.originalB0_std=T.b0_std;
+T.originalB1_std=T.b1_std;
+T.originalB2_std=T.b2_std;
+T.originalR2=T.r2;
+T.originalAdjR2=T.adjR2;
+T.originalAIC=T.AIC;
+T.originalBIC=T.BIC;
+T.cvR2Original=T.cvR2Full;
+T.cvSSEOriginal=T.cvSSEFull;
+T.cvPredOriginal=F.cvPredFull;
 end
 
-function T = makeFishSummary(session,fitTable,D,C,VIF,conditionZ)
+function T = makeFishSummary(session,fitTable,D,VIF,conditionZ)
 ok=isfinite(fitTable.b0);
-cvPair=ok & isfinite(fitTable.cvR2Original) & isfinite(fitTable.cvR2Full);
-if any(cvPair)
-    fractionFullBetter=mean(fitTable.cvR2Full(cvPair)>fitTable.cvR2Original(cvPair));
+cvPhasePair=ok & isfinite(fitTable.cvR2PhaseOnly) & isfinite(fitTable.cvR2Full);
+if any(cvPhasePair)
+    fractionFullBetterThanPhase=mean( ...
+        fitTable.cvR2Full(cvPhasePair)>fitTable.cvR2PhaseOnly(cvPhasePair));
 else
-    fractionFullBetter=NaN;
+    fractionFullBetterThanPhase=NaN;
 end
-cvPhaseOriginalPair=ok & isfinite(fitTable.cvR2PhaseOnly) & isfinite(fitTable.cvR2Original);
-if any(cvPhaseOriginalPair)
-    fractionOriginalBetterThanPhaseOnly=mean( ...
-        fitTable.cvR2Original(cvPhaseOriginalPair)>fitTable.cvR2PhaseOnly(cvPhaseOriginalPair));
+cvBehaviorPair=ok & isfinite(fitTable.cvR2Behavior) & isfinite(fitTable.cvR2Full);
+if any(cvBehaviorPair)
+    fractionFullBetterThanAHV=mean( ...
+        fitTable.cvR2Full(cvBehaviorPair)>fitTable.cvR2Behavior(cvBehaviorPair));
 else
-    fractionOriginalBetterThanPhaseOnly=NaN;
+    fractionFullBetterThanAHV=NaN;
 end
-cvPhaseFullPair=ok & isfinite(fitTable.cvR2PhaseOnly) & isfinite(fitTable.cvR2Full);
-if any(cvPhaseFullPair)
-    fractionFullBetterThanPhaseOnly=mean( ...
-        fitTable.cvR2Full(cvPhaseFullPair)>fitTable.cvR2PhaseOnly(cvPhaseFullPair));
-else
-    fractionFullBetterThanPhaseOnly=NaN;
-end
-T=table(string(session),sum(ok),D.nValidBouts,D.nForwardBouts,D.forwardBoutFraction, ...
+T=table(string(session),sum(ok),D.nValidBouts,D.nAHVBouts, ...
     D.totalPositiveRotations,D.totalNegativeRotations,D.minDirectionalRotations, ...
-    string(D.behaviorTimeSource),string(D.forwardDefinition),string(D.forwardWeightSource), ...
-    D.vigorMissingFraction,D.corrAbsAHV_AHV,D.corrForwardVigor, ...
-    D.corrAbsAHVForward,D.corrAbsAHVVigor,conditionZ,max(VIF,[],'omitnan'), ...
+    string(D.behaviorTimeSource),D.corrAbsAHV_AHV,conditionZ,max(VIF,[],'omitnan'), ...
     median(fitTable.phaseOnlyB0(ok),'omitnan'), ...
-    median(fitTable.originalB0(ok),'omitnan'),median(fitTable.b0(ok),'omitnan'), ...
-    median(fitTable.originalB1(ok),'omitnan'),median(fitTable.b1(ok),'omitnan'), ...
-    median(abs(fitTable.originalB2(ok)),'omitnan'),median(abs(fitTable.b2(ok)),'omitnan'), ...
-    median(fitTable.b2(ok),'omitnan'),mean(fitTable.b2(ok)>0,'omitnan'), ...
-    median(fitTable.bF_std(ok),'omitnan'),median(fitTable.bV_std(ok),'omitnan'), ...
+    median(fitTable.b0(ok),'omitnan'),median(fitTable.b1(ok),'omitnan'), ...
+    median(fitTable.b2(ok),'omitnan'),median(hypot(fitTable.b1(ok),fitTable.b2(ok)),'omitnan'), ...
     median(fitTable.cvR2PhaseOnly(ok),'omitnan'), ...
-    median(fitTable.cvR2Original(ok),'omitnan'),median(fitTable.cvR2Behavior(ok),'omitnan'), ...
-    median(fitTable.cvR2Full(ok),'omitnan'),median(fitTable.cvUniquePhase(ok),'omitnan'), ...
-    median(fitTable.cvUniqueAddedBehavior(ok),'omitnan'), ...
-    median(fitTable.cvDeltaR2AddedBehavior(ok),'omitnan'), ...
-    median(fitTable.cvUniqueAHVBeyondPhase(ok),'omitnan'), ...
-    median(fitTable.cvDeltaR2AHVBeyondPhase(ok),'omitnan'), ...
-    median(fitTable.cvUniqueAllBehaviorBeyondPhase(ok),'omitnan'), ...
-    median(fitTable.cvDeltaR2AllBehaviorBeyondPhase(ok),'omitnan'), ...
-    fractionOriginalBetterThanPhaseOnly,fractionFullBetterThanPhaseOnly,fractionFullBetter, ...
+    median(fitTable.cvR2Behavior(ok),'omitnan'),median(fitTable.cvR2Full(ok),'omitnan'), ...
+    median(fitTable.cvUniquePhase(ok),'omitnan'),median(fitTable.cvDeltaR2Phase(ok),'omitnan'), ...
+    median(fitTable.cvUniqueAHV(ok),'omitnan'),median(fitTable.cvDeltaR2AHV(ok),'omitnan'), ...
+    fractionFullBetterThanPhase,fractionFullBetterThanAHV, ...
     median(fitTable.phaseOnlyPartialR2(ok),'omitnan'), ...
-    median(fitTable.partialR2AHVBeyondPhase(ok),'omitnan'), ...
-    median(fitTable.partialR2AllBehaviorBeyondPhase(ok),'omitnan'), ...
-    median(fitTable.partialR2HD(ok),'omitnan'),median(fitTable.partialR2AddedBehavior(ok),'omitnan'), ...
-    'VariableNames',{'session','nFitNeurons','nBouts','nForwardBouts','forwardBoutFraction', ...
+    median(fitTable.partialR2AHVBeyondPhase(ok),'omitnan'),median(fitTable.partialR2HD(ok),'omitnan'), ...
+    'VariableNames',{'session','nFitNeurons','nBouts','nAHVBouts', ...
     'positiveRotations','negativeRotations','minDirectionalRotations', ...
-    'behaviorTimeSource','forwardDefinition','forwardWeightSource','vigorMissingFraction', ...
-    'corrAbsAHV_AHV','corrForwardVigor','corrAbsAHVForward','corrAbsAHVVigor', ...
-    'conditionNumberStandardized','maxVIF', ...
-    'medianPhaseOnlyB0','medianOriginalB0','medianAugmentedB0', ...
-    'medianOriginalB1','medianAugmentedB1', ...
-    'medianAbsOriginalB2','medianAbsAugmentedB2','medianSignedAugmentedB2', ...
-    'fractionAugmentedB2Positive','medianBFStd','medianBVStd', ...
-    'medianCvR2PhaseOnly','medianCvR2Original','medianCvR2Behavior','medianCvR2Full', ...
-    'medianCvUniquePhase','medianCvUniqueAddedBehavior','medianCvDeltaR2AddedBehavior', ...
-    'medianCvUniqueAHVBeyondPhase','medianCvDeltaR2AHVBeyondPhase', ...
-    'medianCvUniqueAllBehaviorBeyondPhase','medianCvDeltaR2AllBehaviorBeyondPhase', ...
-    'fractionNeuronsOriginalCVBetterThanPhaseOnly', ...
+    'behaviorTimeSource','corrAbsAHV_AHV','conditionNumberStandardized','maxVIF', ...
+    'medianPhaseOnlyB0','medianPhaseAHVB0','medianPhaseAHVB1','medianPhaseAHVB2', ...
+    'medianPhaseAHVModulationStrength','medianCvR2PhaseOnly','medianCvR2Behavior', ...
+    'medianCvR2Full','medianCvUniquePhase','medianCvDeltaR2Phase', ...
+    'medianCvUniqueAHV','medianCvDeltaR2AHV', ...
     'fractionNeuronsFullCVBetterThanPhaseOnly', ...
-    'fractionNeuronsFullCVBetterThanOriginal', ...
-    'medianPhaseOnlyPartialR2','medianPartialR2AHVBeyondPhase', ...
-    'medianPartialR2AllBehaviorBeyondPhase','medianPartialR2HD', ...
-    'medianPartialR2AddedBehavior'});
+    'fractionNeuronsFullCVBetterThanAHVOnly', ...
+    'medianPhaseOnlyPartialR2','medianPartialR2AHVBeyondPhase','medianPartialR2PhaseBeyondAHV'});
 
-% Complete four-model fish-level summaries. These explicit names are used
-% by the plotting functions below; the legacy columns above are preserved.
 T.medianR2PhaseOnly=median(fitTable.phaseOnlyR2(ok),'omitnan');
-T.medianR2Original=median(fitTable.originalR2(ok),'omitnan');
 T.medianR2Behavior=median(fitTable.behaviorR2(ok),'omitnan');
-T.medianR2Augmented=median(fitTable.augmentedR2(ok),'omitnan');
+T.medianR2Full=median(fitTable.r2(ok),'omitnan');
 T.medianAICPhaseOnly=median(fitTable.phaseOnlyAIC(ok),'omitnan');
-T.medianAICOriginal=median(fitTable.originalAIC(ok),'omitnan');
 T.medianAICBehavior=median(fitTable.behaviorAIC(ok),'omitnan');
-T.medianAICAugmented=median(fitTable.augmentedAIC(ok),'omitnan');
+T.medianAICFull=median(fitTable.AIC(ok),'omitnan');
 T.medianBICPhaseOnly=median(fitTable.phaseOnlyBIC(ok),'omitnan');
-T.medianBICOriginal=median(fitTable.originalBIC(ok),'omitnan');
 T.medianBICBehavior=median(fitTable.behaviorBIC(ok),'omitnan');
-T.medianBICAugmented=median(fitTable.augmentedBIC(ok),'omitnan');
+T.medianBICFull=median(fitTable.BIC(ok),'omitnan');
 T.medianBehaviorB1Std=median(fitTable.behaviorB1_std(ok),'omitnan');
 T.medianBehaviorB2Std=median(fitTable.behaviorB2_std(ok),'omitnan');
-T.medianBehaviorBFStd=median(fitTable.behaviorBF_std(ok),'omitnan');
-T.medianBehaviorBVStd=median(fitTable.behaviorBV_std(ok),'omitnan');
+T.medianR2PhaseAHV=T.medianR2Full;
+T.medianR2AHVOnly=T.medianR2Behavior;
+T.medianCvR2PhaseAHV=T.medianCvR2Full;
+T.medianCvR2AHVOnly=T.medianCvR2Behavior;
+T.medianR2Original=T.medianR2Full;
+T.medianAICOriginal=T.medianAICFull;
+T.medianBICOriginal=T.medianBICFull;
+T.medianCvR2Original=T.medianCvR2Full;
 end
 
 function plotPhaseTuningSelection(sessionName,Q,P,outDir)
@@ -1683,7 +1757,7 @@ else
     histogram(ax,rad2deg(selectedPref),18,'BinLimits',[-180 180], ...
         'FaceColor',[.25 .50 .85],'EdgeColor','none');
     xlim(ax,[-180 180]); xticks(ax,-180:90:180);
-    xlabel(ax,'Selected-cell preferred phase (deg)'); ylabel(ax,'Cells'); grid(ax,'on');
+    xlabel(ax,'Selected-cell phase-tuning preference (deg)'); ylabel(ax,'Cells'); grid(ax,'on');
 end
 
 title(tl,sprintf('%s | %s: ORI\\_V15 phase-tuning selection | %d/%d cells', ...
@@ -1695,20 +1769,16 @@ end
 function plotRegressorQC(R,P,outDir)
 idx=evenlySpacedIndices(numel(R.tCa),P.qc.maxTimePoints);
 t=R.tCa(idx)/60;
-fig=figure('Visible',P.figureVisible,'Color','w','Position',[100 100 1450 850]);
-tl=tiledlayout(fig,4,1,'TileSpacing','compact','Padding','compact');
+fig=figure('Visible',P.figureVisible,'Color','w','Position',[100 100 1450 650]);
+tl=tiledlayout(fig,2,1,'TileSpacing','compact','Padding','compact');
 ax=nexttile(tl); plot(ax,t,wrapToPiLocal(R.phaseCa(idx)),'k');
 ylabel(ax,'phase (rad)'); title(ax,'Network phase'); grid(ax,'on');
 ax=nexttile(tl); plot(ax,t,R.ahvCa(idx)*180/pi,'Color',[0.15 0.35 0.85]);
-ylabel(ax,'AHV (deg/s)'); title(ax,'Signed AHV'); grid(ax,'on');
-ax=nexttile(tl); plot(ax,t,zscoreLocal(R.forwardCa(idx)),'Color',[0.85 0.35 0.10]);
-ylabel(ax,'F (z for display)'); title(ax,'Filtered amp70-weighted forward events'); grid(ax,'on');
-ax=nexttile(tl); plot(ax,t,zscoreLocal(R.vigorCa(idx)),'Color',[0.20 0.60 0.25]);
-ylabel(ax,'V (z for display)'); xlabel(ax,'Time (min)'); title(ax,'Filtered continuous vigor'); grid(ax,'on');
+ylabel(ax,'Mei AHV proxy (deg)'); xlabel(ax,'Time (min)'); title(ax,'Signed AHV'); grid(ax,'on');
 linkaxes(findall(fig,'Type','axes'),'x');
-title(tl,sprintf('%s | %s: augmented behavior regressors', ...
+title(tl,sprintf('%s | %s: phase and AHV regressors', ...
     P.morphDisplayName,R.name),'Interpreter','none');
-saveFigureLocal(fig,outDir,[R.name '_augmented_behavior_regressor_QC'],P);
+saveFigureLocal(fig,outDir,[R.name '_phase_AHV_regressor_QC'],P);
 end
 
 function plotPredictorCorrelation(R,P,outDir)
@@ -1727,119 +1797,99 @@ end
 title(ax,sprintf('%s | %s predictor correlations | max VIF %.2f', ...
     P.morphDisplayName,R.name,max(R.predictorVIF,[],'omitnan')), ...
     'Interpreter','none');
-saveFigureLocal(fig,outDir,[R.name '_augmented_predictor_correlation'],P);
+saveFigureLocal(fig,outDir,[R.name '_phase_AHV_predictor_correlation'],P);
 end
 
 function plotPerFishModelComparison(R,P,outDir)
 T=R.fitTable;
 fig=figure('Visible',P.figureVisible,'Color','w','Position',[40 60 1850 950]);
-tl=tiledlayout(fig,2,4,'TileSpacing','compact','Padding','compact');
+tl=tiledlayout(fig,2,3,'TileSpacing','compact','Padding','compact');
 
-cvR2=[T.cvR2PhaseOnly,T.cvR2Original,T.cvR2Full,T.cvR2Behavior];
-inSampleR2=[T.phaseOnlyR2,T.originalR2,T.augmentedR2,T.behaviorR2];
-aic=[T.phaseOnlyAIC,T.originalAIC,T.augmentedAIC,T.behaviorAIC];
-bic=[T.phaseOnlyBIC,T.originalBIC,T.augmentedBIC,T.behaviorBIC];
+cvR2=[T.cvR2PhaseOnly,T.cvR2Full,T.cvR2Behavior];
+inSampleR2=[T.phaseOnlyR2,T.r2,T.behaviorR2];
+aic=[T.phaseOnlyAIC,T.AIC,T.behaviorAIC];
+bic=[T.phaseOnlyBIC,T.BIC,T.behaviorBIC];
 
-ax=nexttile(tl); fourModelPlot(ax,cvR2,'Blocked-CV R^2',true);
-ax=nexttile(tl); fourModelPlot(ax,inSampleR2,'In-sample R^2',true);
-ax=nexttile(tl); fourModelPlot(ax,aic-aic(:,1),'Delta AIC vs phase-only',true); yline(ax,0,'k:');
-ax=nexttile(tl); fourModelPlot(ax,bic-bic(:,1),'Delta BIC vs phase-only',true); yline(ax,0,'k:');
-ax=nexttile(tl); contributionHistogram(ax,T.cvUniqueAHVBeyondPhase,40, ...
-    [0.55 0.30 0.75],'1 - SSE_{original}/SSE_{phase-only}','AHV beyond phase');
-ax=nexttile(tl); contributionHistogram(ax,T.cvUniqueAllBehaviorBeyondPhase,40, ...
-    [0.85 0.40 0.15],'1 - SSE_{augmented}/SSE_{phase-only}','All behavior beyond phase');
+ax=nexttile(tl); threeModelPlot(ax,cvR2,'Blocked-CV R^2',true);
+ax=nexttile(tl); threeModelPlot(ax,inSampleR2,'In-sample R^2',true);
+ax=nexttile(tl); threeModelPlot(ax,aic-aic(:,1),'Delta AIC vs phase-only',true); yline(ax,0,'k:');
+ax=nexttile(tl); threeModelPlot(ax,bic-bic(:,1),'Delta BIC vs phase-only',true); yline(ax,0,'k:');
+ax=nexttile(tl); contributionHistogram(ax,T.cvUniqueAHV,40, ...
+    [0.55 0.30 0.75],'1 - SSE_{phase+AHV}/SSE_{phase-only}','AHV beyond phase');
 ax=nexttile(tl); contributionHistogram(ax,T.cvUniquePhase,40, ...
-    [0.25 0.25 0.25],'1 - SSE_{augmented}/SSE_{behavior}','Phase beyond all behavior');
-ax=nexttile(tl); contributionHistogram(ax,T.cvUniqueAddedBehavior,40, ...
-    [0.15 0.55 0.90],'1 - SSE_{augmented}/SSE_{original}','Added F+V beyond original');
+    [0.25 0.25 0.25],'1 - SSE_{phase+AHV}/SSE_{AHV-only}','Phase beyond AHV');
 title(tl,[P.morphDisplayName ' | ' R.name ...
-    ': matched four-model comparison'],'Interpreter','none');
-saveFigureLocal(fig,outDir,[R.name '_phase_only_and_augmented_model_comparison'],P);
+    ': matched three-model comparison'],'Interpreter','none');
+saveFigureLocal(fig,outDir,[R.name '_three_model_comparison'],P);
 end
 
 function plotAllFishModelComparison(T,P,outDir)
 fig=figure('Visible',P.figureVisible,'Color','w','Position',[40 60 1850 950]);
-tl=tiledlayout(fig,2,4,'TileSpacing','compact','Padding','compact');
+tl=tiledlayout(fig,2,3,'TileSpacing','compact','Padding','compact');
 
-cvR2=[T.cvR2PhaseOnly,T.cvR2Original,T.cvR2Full,T.cvR2Behavior];
-inSampleR2=[T.phaseOnlyR2,T.originalR2,T.augmentedR2,T.behaviorR2];
-aic=[T.phaseOnlyAIC,T.originalAIC,T.augmentedAIC,T.behaviorAIC];
-bic=[T.phaseOnlyBIC,T.originalBIC,T.augmentedBIC,T.behaviorBIC];
+cvR2=[T.cvR2PhaseOnly,T.cvR2Full,T.cvR2Behavior];
+inSampleR2=[T.phaseOnlyR2,T.r2,T.behaviorR2];
+aic=[T.phaseOnlyAIC,T.AIC,T.behaviorAIC];
+bic=[T.phaseOnlyBIC,T.BIC,T.behaviorBIC];
 
-ax=nexttile(tl); fourModelPlot(ax,cvR2,'Blocked-CV R^2',false);
-ax=nexttile(tl); fourModelPlot(ax,inSampleR2,'In-sample R^2',false);
-ax=nexttile(tl); fourModelPlot(ax,aic-aic(:,1),'Delta AIC vs phase-only',false); yline(ax,0,'k:');
-ax=nexttile(tl); fourModelPlot(ax,bic-bic(:,1),'Delta BIC vs phase-only',false); yline(ax,0,'k:');
-ax=nexttile(tl); contributionHistogram(ax,T.cvUniqueAHVBeyondPhase,60, ...
-    [0.55 0.30 0.75],'1 - SSE_{original}/SSE_{phase-only}','AHV beyond phase');
-ax=nexttile(tl); contributionHistogram(ax,T.cvUniqueAllBehaviorBeyondPhase,60, ...
-    [0.85 0.40 0.15],'1 - SSE_{augmented}/SSE_{phase-only}','All behavior beyond phase');
+ax=nexttile(tl); threeModelPlot(ax,cvR2,'Blocked-CV R^2',false);
+ax=nexttile(tl); threeModelPlot(ax,inSampleR2,'In-sample R^2',false);
+ax=nexttile(tl); threeModelPlot(ax,aic-aic(:,1),'Delta AIC vs phase-only',false); yline(ax,0,'k:');
+ax=nexttile(tl); threeModelPlot(ax,bic-bic(:,1),'Delta BIC vs phase-only',false); yline(ax,0,'k:');
+ax=nexttile(tl); contributionHistogram(ax,T.cvUniqueAHV,60, ...
+    [0.55 0.30 0.75],'1 - SSE_{phase+AHV}/SSE_{phase-only}','AHV beyond phase');
 ax=nexttile(tl); contributionHistogram(ax,T.cvUniquePhase,60, ...
-    [0.25 0.25 0.25],'1 - SSE_{augmented}/SSE_{behavior}','Phase beyond all behavior');
-ax=nexttile(tl); contributionHistogram(ax,T.cvUniqueAddedBehavior,60, ...
-    [0.15 0.55 0.90],'1 - SSE_{augmented}/SSE_{original}','Added F+V beyond original');
+    [0.25 0.25 0.25],'1 - SSE_{phase+AHV}/SSE_{AHV-only}','Phase beyond AHV');
 title(tl,[P.morphDisplayName ...
-    ' | all fish: phase-only, original, behavior-only and augmented models']);
-saveFigureLocal(fig,outDir,'ALL_FISH_phase_only_and_augmented_model_comparison',P);
+    ' | all fish: phase, phase + AHV, and AHV models']);
+saveFigureLocal(fig,outDir,'ALL_FISH_three_model_comparison',P);
 end
 
 function plotAllFishCoefficientSummary(T,P,outDir)
-vars={'phaseOnlyB0_std','originalB0_std','b0_std', ...
-    'behaviorB1_std','behaviorB2_std','behaviorBF_std','behaviorBV_std', ...
-    'b1_std','b2_std','bF_std','bV_std', ...
-    'cvR2PhaseOnly','cvR2Original','cvR2Behavior','cvR2Full'};
-labels={'Phase-only b0 std','Original b0 std','Augmented b0 std', ...
-    'Behavior-only |AHV| std','Behavior-only AHV std', ...
-    'Behavior-only forward std','Behavior-only vigor std', ...
-    'Augmented |AHV| std','Augmented AHV std', ...
-    'Augmented forward std','Augmented vigor std', ...
-    'Phase-only blocked-CV R^2','Original blocked-CV R^2', ...
-    'Behavior-only blocked-CV R^2','Augmented blocked-CV R^2'};
+vars={'phaseOnlyB0_std','b0_std','behaviorB1_std', ...
+    'behaviorB2_std','cvR2PhaseOnly','cvR2Full','cvR2Behavior'};
+labels={'Phase b0 std','Phase + AHV b0 std','AHV-only |AHV| std', ...
+    'AHV-only signed AHV std','Phase blocked-CV R^2', ...
+    'Phase + AHV blocked-CV R^2','AHV blocked-CV R^2'};
 fig=figure('Visible',P.figureVisible,'Color','w','Position',[70 70 1750 1000]);
-tl=tiledlayout(fig,4,4,'TileSpacing','compact','Padding','compact');
+tl=tiledlayout(fig,2,4,'TileSpacing','compact','Padding','compact');
 for k=1:numel(vars)
     ax=nexttile(tl); x=T.(vars{k}); x=x(isfinite(x));
     histogram(ax,x,50,'FaceColor',[0.25 0.25 0.25],'EdgeColor','none');
     xline(ax,0,'k:','HandleVisibility','off'); xlabel(ax,labels{k}); ylabel(ax,'Neurons'); grid(ax,'on');
 end
 title(tl,[P.morphDisplayName ...
-    ' | all fish: four-model standardized coefficients and prediction']);
-saveFigureLocal(fig,outDir,'ALL_FISH_phase_only_and_augmented_distributions',P);
+    ' | all fish: three-model standardized coefficients and prediction']);
+saveFigureLocal(fig,outDir,'ALL_FISH_three_model_distributions',P);
 end
 
 function plotFishLevelSummary(F,P,outDir)
 n=height(F); x=(1:n)';
-fig=figure('Visible',P.figureVisible,'Color','w','Position',[80 80 1650 900]);
-tl=tiledlayout(fig,2,3,'TileSpacing','compact','Padding','compact');
+fig=figure('Visible',P.figureVisible,'Color','w','Position',[80 80 1450 850]);
+tl=tiledlayout(fig,2,2,'TileSpacing','compact','Padding','compact');
 
-ax=nexttile(tl); pairedFishFour(ax,x,F.medianR2PhaseOnly,F.medianR2Original, ...
-    F.medianR2Augmented,F.medianR2Behavior,'Median in-sample R^2');
-ax=nexttile(tl); pairedFishFour(ax,x,F.medianCvR2PhaseOnly,F.medianCvR2Original, ...
-    F.medianCvR2Full,F.medianCvR2Behavior,'Median blocked-CV R^2');
-ax=nexttile(tl); plot(ax,x,F.medianCvUniqueAHVBeyondPhase,'o-','LineWidth',1.2, ...
+ax=nexttile(tl); pairedFishThree(ax,x,F.medianR2PhaseOnly,F.medianR2Full, ...
+    F.medianR2Behavior,'Median in-sample R^2');
+ax=nexttile(tl); pairedFishThree(ax,x,F.medianCvR2PhaseOnly,F.medianCvR2Full, ...
+    F.medianCvR2Behavior,'Median blocked-CV R^2');
+ax=nexttile(tl); plot(ax,x,F.medianCvUniqueAHV,'o-','LineWidth',1.2, ...
     'MarkerFaceColor',[0.55 0.30 0.75]); yline(ax,0,'k:');
 ylabel(ax,'Median unique AHV CV'); grid(ax,'on'); title(ax,'AHV beyond phase');
-ax=nexttile(tl); plot(ax,x,F.medianCvUniqueAllBehaviorBeyondPhase,'o-','LineWidth',1.2, ...
-    'MarkerFaceColor',[0.90 0.40 0.15]); yline(ax,0,'k:');
-ylabel(ax,'Median unique behavior CV'); grid(ax,'on'); title(ax,'All behavior beyond phase');
 ax=nexttile(tl); plot(ax,x,F.medianCvUniquePhase,'o-','LineWidth',1.2, ...
     'MarkerFaceColor',[0.20 0.55 0.85]); yline(ax,0,'k:');
-ylabel(ax,'Median unique phase CV'); grid(ax,'on'); title(ax,'Phase beyond all behavior');
-ax=nexttile(tl); plot(ax,x,F.medianCvUniqueAddedBehavior,'o-','LineWidth',1.2, ...
-    'MarkerFaceColor',[0.90 0.40 0.15]); yline(ax,0,'k:');
-ylabel(ax,'Median unique F+V CV'); grid(ax,'on'); title(ax,'Added behavior beyond original');
+ylabel(ax,'Median unique phase CV'); grid(ax,'on'); title(ax,'Phase beyond AHV');
 
 axs=findall(fig,'Type','axes');
 for k=1:numel(axs)
     xlim(axs(k),[0.5 n+0.5]); xticks(axs(k),x); xticklabels(axs(k),F.session); xtickangle(axs(k),45);
 end
-title(tl,[P.morphDisplayName ' | fish-level matched four-model comparison']);
-saveFigureLocal(fig,outDir,'ALL_FISH_phase_only_and_augmented_fish_level_summary',P);
+title(tl,[P.morphDisplayName ' | fish-level matched three-model comparison']);
+saveFigureLocal(fig,outDir,'ALL_FISH_three_model_fish_level_summary',P);
 end
 
-function pairedFishFour(ax,x,phaseOnly,original,augmented,behavior,yLabel)
-offset=[-0.27 -0.09 0.09 0.27];
-values=[phaseOnly(:),original(:),augmented(:),behavior(:)];
+function pairedFishThree(ax,x,phaseOnly,phaseAHV,ahv,yLabel)
+offset=[-0.18 0 0.18];
+values=[phaseOnly(:),phaseAHV(:),ahv(:)];
 colors=modelColors();
 hold(ax,'on');
 for i=1:numel(x)
@@ -1849,8 +1899,8 @@ for i=1:numel(x)
             'HandleVisibility','off');
     end
 end
-names={'Phase-only','Original','Augmented','Behavior-only'};
-for j=1:4
+names={'Phase','Phase + AHV','AHV'};
+for j=1:size(values,2)
     plot(ax,x+offset(j),values(:,j),'o','MarkerFaceColor',colors(j,:), ...
         'MarkerEdgeColor','k','DisplayName',names{j});
 end
@@ -1858,25 +1908,25 @@ ylabel(ax,yLabel); grid(ax,'on'); title(ax,[yLabel ': matched frames']);
 legend(ax,'Location','best');
 end
 
-function fourModelPlot(ax,M,yLabel,showMatchedLines)
-names={'Phase-only','Original','Augmented','Behavior-only'};
+function threeModelPlot(ax,M,yLabel,showMatchedLines)
+names={'Phase','Phase + AHV','AHV'};
 colors=modelColors();
 ok=all(isfinite(M),2);
 M=M(ok,:);
 hold(ax,'on');
 if isempty(M)
-    xlim(ax,[0.5 4.5]); xticks(ax,1:4); xticklabels(ax,names);
+    xlim(ax,[0.5 size(M,2)+0.5]); xticks(ax,1:size(M,2)); xticklabels(ax,names);
     ylabel(ax,yLabel); grid(ax,'on'); title(ax,'No complete matched fits');
     return;
 end
 if showMatchedLines
     for i=1:size(M,1)
-        plot(ax,1:4,M(i,:),'-','Color',[.78 .78 .78], ...
+        plot(ax,1:size(M,2),M(i,:),'-','Color',[.78 .78 .78], ...
             'LineWidth',0.4,'HandleVisibility','off');
     end
 end
-h=gobjects(4,1);
-for j=1:4
+h=gobjects(size(M,2),1);
+for j=1:size(M,2)
     if showMatchedLines
         xx=repmat(j,size(M,1),1);
     else
@@ -1888,7 +1938,7 @@ for j=1:4
     plot(ax,[j-.22 j+.22],[med med],'-','Color',colors(j,:), ...
         'LineWidth',3,'HandleVisibility','off');
 end
-xlim(ax,[0.5 4.5]); xticks(ax,1:4); xticklabels(ax,names); xtickangle(ax,25);
+xlim(ax,[0.5 size(M,2)+0.5]); xticks(ax,1:size(M,2)); xticklabels(ax,names); xtickangle(ax,25);
 ylabel(ax,yLabel); grid(ax,'on');
 title(ax,sprintf('%s; n = %d matched neurons',yLabel,size(M,1)));
 legend(ax,h,'Location','best');
@@ -1903,8 +1953,8 @@ title(ax,[titleText ', blocked CV']);
 end
 
 function colors = modelColors()
-% Phase-only purple; original gray; augmented blue; behavior-only orange.
-colors=[0.55 0.30 0.75; 0.55 0.55 0.55; 0.15 0.55 0.90; 0.90 0.40 0.15];
+% Phase-only purple; phase+AHV blue; AHV-only orange.
+colors=[0.55 0.30 0.75; 0.15 0.55 0.90; 0.90 0.40 0.15];
 end
 
 function idx = evenlySpacedIndices(n,maxN)
@@ -1967,23 +2017,31 @@ class_original_roi_ids=struct('CW',allCandidateIDs(class_masks.CW), ...
     'NotPhaseTuned',allCandidateIDs(class_masks.NotPhaseTuned)); %#ok<NASGU>
 source_candidate_path=candidatePath; %#ok<NASGU>
 source_behavior_path=behaviorPath; %#ok<NASGU>
-behavior_augmented_model_fit_table=fitTable; %#ok<NASGU>
+three_model_fit_table=fitTable; %#ok<NASGU>
 phase_tuning_selection=Tuning; %#ok<NASGU>
-behavior_augmented_model_definition=struct( ...
-    'phaseOnlyFormula','a*cos(phi)+d*sin(phi)+c0', ...
-    'originalFormula','a*cos(phi)+d*sin(phi)+b1*abs(AHV)+b2*AHV+c0', ...
-    'behaviorOnlyFormula','b1*abs(AHV)+b2*AHV+bF*F+bV*V+c0', ...
-    'augmentedFormula', ...
-    'a*cos(phi)+d*sin(phi)+b1*abs(AHV)+b2*AHV+bF*F+bV*V+c0', ...
-    'formula','a*cos(phi)+d*sin(phi)+b1*abs(AHV)+b2*AHV+bF*F+bV*V+c0', ...
-    'derivedAmplitude','b0=hypot(a,d)','derivedPreferredPhase','atan2(d,a)', ...
-    'comparisonPolicy','Identical neurons, frames and blocked-CV folds for all four models', ...
+three_model_definition=struct( ...
+    'phaseOnlyFormula',['betaTheta*cos(sourcePrefRad-phi)+c0; sourcePrefRad ' ...
+    'from first circular harmonic of stored tuning_curves_phi_all_cells'], ...
+    'ahvOnlyFormula','b1*abs(AHV)+b2*AHV+c0', ...
+    'phaseAHVFormula',['betaTheta*cos(sourcePrefRad-phi)+' ...
+    'b1*abs(AHV)+b2*AHV+c0; sourcePrefRad from first circular harmonic ' ...
+    'of stored tuning_curves_phi_all_cells'], ...
+    'fixedPreferredPhase', ...
+    'sourcePrefRad from first circular harmonic of stored tuning_curves_phi_all_cells', ...
+    'preferredPhaseSource', ...
+    'first circular harmonic of tuning_curves_phi_all_cells', ...
+    'legacyFieldMapping','a=betaTheta; d=0; b0=abs(betaTheta); prefRad=sourcePrefRad', ...
+    'comparisonPolicy','Identical neurons, frames and blocked-CV folds for all three models', ...
     'classInfo',info); %#ok<NASGU>
 save(out,'neuron_class_label','class_masks','class_candidate_indices', ...
     'class_original_roi_ids','source_candidate_path','source_behavior_path', ...
-    'behavior_augmented_model_fit_table', ...
-    'phase_tuning_selection','behavior_augmented_model_definition','-append');
-fprintf('Saved augmented classified copy: %s\n',out);
+    'three_model_fit_table', ...
+    'phase_tuning_selection','three_model_definition','-append');
+fprintf('Saved three-model classified copy: %s\n',out);
+end
+
+function label=ternaryActivityScale(doZscore)
+if doZscore, label='zActivity'; else, label='F_over_F0'; end
 end
 
 function Z = zscoreColumnsFinite(X)
@@ -2015,10 +2073,6 @@ function r = safeCorr(x,y)
 ok=isfinite(x)&isfinite(y); x=x(ok); y=y(ok);
 if numel(x)<3 || std(x)==0 || std(y)==0; r=NaN; return; end
 q=corrcoef(x,y); r=q(1,2);
-end
-
-function v = safeDivide(a,b)
-if isfinite(a)&&isfinite(b)&&b~=0; v=a/b; else; v=NaN; end
 end
 
 function ang = cleanAngleUnitsToRad(ang)

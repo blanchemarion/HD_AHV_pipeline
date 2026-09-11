@@ -34,8 +34,12 @@ test-results/
 
 # Large data and result files
 *.mat
-outputs/
-data_processed/
+
+# Pipeline outputs (canonical and suffixed/archive runs)
+/outputs/
+/outputs_*/
+/data_processed/
+/data_processed_*/
 
 # Operating system and editors
 .DS_Store
