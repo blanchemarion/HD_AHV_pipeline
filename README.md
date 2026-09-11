@@ -22,8 +22,6 @@ Configuration is in `scripts/pipeline_config.m`; shared fitter helpers are in `s
 - Statistics and Machine Learning Toolbox
 - A data root containing `surface/`, `molino/`, and `pachon/`
 
-No third-party Circular Statistics Toolbox is required by the poster analysis.
-
 ## Inputs
 
 The default data root is `/home/blanche/data`:
@@ -63,7 +61,7 @@ Accepted options are `DataRoot`, `PipelineRoot`, `FigureVisible`, `OverwriteOutp
 
 ## Model and classification
 
-Phase-tuned candidates are selected separately within each fish using the ORI_V15-style procedure: timewise z-scoring, framewise 2nd–98th percentile clipping and population centering, positive rectification, 36-bin circularly smoothed Skaggs information, 500 circular shifts over 10–90% of the valid sequence, and within-fish Benjamini–Hochberg FDR (`q < 0.05`). A candidate can contribute to the population phase used in its own test, so selection is partly circular unless upstream phase was constructed leave-one-out.
+Phase-tuned candidates are selected separately within each fish using `ORI_V15.m` procedure: timewise z-scoring, framewise 2nd–98th percentile clipping and population centering, positive rectification, 36-bin circularly smoothed Skaggs information, 500 circular shifts over 10–90% of the valid sequence, and within-fish Benjamini–Hochberg FDR (`q < 0.05`). A candidate can contribute to the population phase used in its own test, so selection is partly circular unless upstream phase was constructed leave-one-out.
 
 For each selected neuron, the combined fixed-preference model is:
 
@@ -97,10 +95,6 @@ Fish/animal—not neuron or CV fold—is the inferential unit. The analysis summ
 ### Core behavior
 
 This stage reads the complete original pass-2 file for each successfully fitted session. It reports eligible-turn frequency, median absolute turn angle, median quiet interval, and 90th-percentile quiet interval. Quiet intervals lie between consecutive eligible turns. Plots show morph medians, fish-bootstrap 95% intervals, and individual fish.
-
-### Poster reproduction
-
-This stage independently discovers the newest clean candidate file per recording and produces aligned candidate-cell PCA, phase-tuning heatmaps, FWHM, vector strength, directional information, peak-to-baseline metrics, alternating-block split-half reliability, and alignment QC. By default, the population-tuning peak of each fish is rotated to 0 degrees because network phase alone has no absolute heading landmark. Morph inference uses fish summaries.
 
 ### Functional classes and anatomy
 
@@ -150,14 +144,6 @@ outputs/
 
 `data_processed/pipeline_run_summary.mat` stores the returned results structure and effective configuration.
 
-## Reproducibility notes
-
-- Raw candidate and behavior files are not modified; classifications are exported separately.
-- The three models share samples and blocked folds.
-- Phase-tuning FDR is within fish; coefficient-family Bonferroni correction is pooled across the cohort.
-- Fish/session is the default biological replicate; neurons and CV folds are not independent animals.
-- Every `rec*` directory is expected to participate unless a stage records a technical failure.
-- Random seeds, thresholds, shuffle/bootstrap/permutation counts, formulas, and effective settings are saved with analysis outputs.
-- Figures are exported as PNG and SVG; PDF output is not required.
+## Reproducibility note
 
 Most scientific parameters are defined near the top of their analysis function, not in `pipeline_config.m`. Retain saved configurations and audits with any alternative analysis.
